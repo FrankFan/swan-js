@@ -342,13 +342,6 @@ export default class Slave {
         });
     }
 
-    switchTab(params) {
-        return this.swaninterface.swan.reLaunch({
-            ...params,
-            url: '/' + params.url
-        });
-    }
-
     /**
      * 析构方法
      *

@@ -57,6 +57,14 @@ export default class TabSlave {
     findChildIndex(uri) {
         return this.children.findIndex(child => child.isTheSlave(uri));
     }
+    getIndexBySlaveId(slaveId) {
+        for (let i = 0, len = this.children.length; i < len; i++) {
+            let item = this.children[i];
+            if (+item.slaveId === +slaveId) {
+                return i;
+            }
+        }
+    }
     getCurrentChildren() {
         return this.children[this.currentIndex];
     }
@@ -86,25 +94,42 @@ export default class TabSlave {
         return this.findChild(paramsObj.url).reLaunch(paramsObj);
     }
     setToIndex(uri) {
-        this.currentIndex = this.findChildIndex(uri);
+        this.setCurrentIndex(this.findChildIndex(uri));
         return this.currentIndex;
     }
-    switchTab(paramsObj) {
-        return this.swaninterface.invoke('switchTab', paramsObj)
-        .then(res => {
-            this.history.popTo(this.initSlave.getSlaveId());
-            return res;
-        });
+    setCurrentIndex(index) {
+        this.currentIndex = index;
     }
-    onswitchTab({fromId, toId, toPage}) {
-        const toChild = this.findChild(toPage);
-        const index = this.setToIndex(toPage);
+    switchTab(paramsObj) {
+        return this.swaninterface.invoke('switchTab', paramsObj);
+    }
+    onswitchTab({fromId, toId, toPage, toTabIndex}) {
+        // 解决多个tab配置同一个页面case。先通过slaveId找，没找到则通过tab下标找
+        let toChild = this.findChild(toId);
+        let webviewIndex;
+        if (!toChild) {
+            // 开发者工具暂时没传toTabIndex，走老逻辑通过url找页面
+            if (toTabIndex === undefined) {
+                toChild = this.findChild(toPage);
+                webviewIndex = this.setToIndex(toPage);
+            }
+            else {
+                toChild = this.children[toTabIndex];
+                webviewIndex = toTabIndex;
+            }
+
+        }
+        else {
+            webviewIndex = this.getIndexBySlaveId(toId);
+        }
+        this.setCurrentIndex(webviewIndex);
+
         // 触发被切换到的slave的onEnqueue
         toChild.setSlaveId(toId).onEnqueue()
         .then(() => {
-            const text = this.list[index].text || '';
+            const text = this.list[webviewIndex].text || '';
             toChild.onswitchTab({
-                index,
+                webviewIndex,
                 text
             });
         });

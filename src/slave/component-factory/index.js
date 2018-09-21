@@ -18,6 +18,7 @@ export default class SanFactory {
         // 依赖池，所有的组件需要的依赖是工厂提供的
         const communicator = Communicator.getInstance(this.componentDefaultProps.swaninterface);
         this.dependenciesPool = {
+            san,
             communicator,
             ...this.componentDefaultProps
         };
@@ -74,16 +75,19 @@ export default class SanFactory {
         // 原始的组件的原型
         const originComponentPrototype = componentInfo.componentPrototype;
         const superComponentName = originComponentPrototype.superComponent || 'swan-component';
+        
         // 获取到当前组件的超类
         const superComponent = this.componentInfos[superComponentName].componentPrototype;
+        
         // 融合后的组件的prototype
         const mergedComponentPrototype = this.mergeComponentProtos(superComponent, componentInfo.componentPrototype);
+        
         // 所有的组件的依赖在依赖池寻找后的结果
         const dependencies = (mergedComponentPrototype.dependencies || [])
-        .reduce((dependencies, depsName) => {
-            dependencies[depsName] = this.dependenciesPool[depsName];
-            return dependencies;
-        }, {});
+            .reduce((dependencies, depsName) => {
+                dependencies[depsName] = this.dependenciesPool[depsName];
+                return dependencies;
+            }, {});
 
         // merge后的组件原型，可以用来注册san组件
         const componentPrototype = {

@@ -24,7 +24,7 @@ export class Navigator {
         swanEvents('master_active_create_initslave');
         // 创建初始化slave
         this.initSlave = this.createInitSlave(initParams.pageUrl, this.appConfig);
-        
+
         // slave的init调用
         this.initSlave.init(initParams)
         .then(initRes => {
@@ -69,16 +69,20 @@ export class Navigator {
     }
     navigateBack(paramsObj = {}) {
         const topSlave = this.history.getTopSlaves()[0];
-        // 将即将退栈的slave状态改为退栈中（实际上还未退出）
+        // 将即将退栈的 slave 状态改为退栈中
         topSlave.isClosing = true;
-        return this.swaninterface.invoke('navigateBack', paramsObj).finally(() => {
-            // 真正完成退栈
-            topSlave.isClosing = false;
-        });
+        return this.swaninterface.invoke('navigateBack', paramsObj)
+        // 完成退栈
+        .then(() => topSlave.isClosing = false)
+        .catch(() => topSlave.isClosing = false);
     }
     switchTab(paramsObj) {
         paramsObj.url = this.pathResolver(paramsObj.url);
-        return this.initSlave.switchTab(paramsObj);
+        return this.initSlave.switchTab(paramsObj)
+        .then(res => {
+            this.history.popTo(this.initSlave.getSlaveId());
+            return res;
+        });
     }
     reLaunch(paramsObj = {}) {
         if (!paramsObj.url) {
@@ -104,12 +108,12 @@ export class Navigator {
     listenRoute() {
         // 原生层传递过来的消息
         return this.swaninterface
-        .invoke('onRoute', ({routeType, fromId, toId, toPage}) => {
+        .invoke('onRoute', ({routeType, fromId, toId, toPage, toTabIndex}) => {
             swanEvents('pageSwitchStart', {
                 slaveId: toId,
                 timestamp: Date.now() + ''
             });
-            this[`on${routeType}`].call(this, fromId, toId, toPage);
+            this[`on${routeType}`].call(this, fromId, toId, toPage, toTabIndex);
         });
     }
     oninit(fromId, toId) {}
@@ -120,8 +124,8 @@ export class Navigator {
         // 弹出delta个slave并挨个执行其close方法
         this.history.popTo(toId);
     }
-    onswitchTab(fromId, toId, toPage) {
-        this.initSlave.onswitchTab({fromId, toId, toPage});
+    onswitchTab(fromId, toId, toPage, toTabIndex) {
+        this.initSlave.onswitchTab({fromId, toId, toPage, toTabIndex});
     }
     pathResolver(path) {
         if (/^\//g.exec(path)) {

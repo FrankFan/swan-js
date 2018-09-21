@@ -66,14 +66,6 @@
         else {
             oldPatch(window.PageComponent);
         }
-
-        /**
-         * 修复浏览器一些兼容问题
-         */
-        const browserPatch = () => {
-            document.body.addEventListener('touchmove', () => {});
-        };
-        browserPatch();
     }
     catch (e) {
         global.errorMsg['execError'] = e;

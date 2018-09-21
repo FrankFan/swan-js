@@ -39,6 +39,9 @@ window.swanInterface = {
     },
 	invoke: function (type, ...args) {
         return this[type] && this[type](...args);
+        // return new Promise.resolve().then(function (res) {
+        //     return this[type] && this[type](...args);
+        // });
     },
     navigateTo: function (params) {
         return new Promise(function (resolve, reject) {
@@ -47,6 +50,10 @@ window.swanInterface = {
             resolve({wvID});
             params.success && params.success({wvID});
         });
+    },
+    switchTab: function (params = {}) {
+        params.success && params.success({});
+        return Promise.resolve({});
     },
 	adaptMaster:noop,
 	bindSlaveLoadedEvents:noop,

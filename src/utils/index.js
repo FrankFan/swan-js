@@ -31,6 +31,26 @@ export const getParams = query => {
         }, { });
 };
 
+export const processParam = param => {
+    const originScheme = param.appInfo.appLaunchScheme || '';
+    if (/:\/\/v[0-9]+/.test(originScheme) || !originScheme) {
+        return param;
+    }
+    const processSchemeRegx = /(_baiduboxapp|callback|upgrade).*?(&|$)/g;
+    const schemeRegx = /\/\/swan\/[0-9a-z_A-Z]+\/(.*?)\?(.*)$/;
+    const scheme = originScheme.replace(processSchemeRegx, '');
+    const analysis = scheme.match(schemeRegx);
+    const path = analysis[1];
+    const queryStr = analysis[2];
+    const queryObj = getParams(queryStr);
+    const pathQuery = {
+        path: path,
+        query: queryObj
+    };
+    param.appInfo = Object.assign(param.appInfo, pathQuery);
+    return param;
+};
+
 export const noop = () => {};
 
 export const getValueSafety = (data, path) => {

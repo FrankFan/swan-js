@@ -6,8 +6,11 @@
 (function (global, componentFragments, globalCustomComponents) {
 
     const customComponents = {};
+    const templateComponents = {};
+
     // 所有的自定义组件
     "#swanCustomComponentsDefine#";
+    "#swanCustomComponentTemplates#";
 
     global.componentFactory.componentDefine(
         '<%-customComponentPath%>',
@@ -19,7 +22,7 @@
         }),
         {
             classProperties: {
-                components: {...componentFragments, ...customComponents}
+                components: {...componentFragments, ...customComponents, ...templateComponents}
             }
         }
     );

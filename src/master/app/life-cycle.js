@@ -2,7 +2,7 @@
  * @file APP的lifeCycle抽象
  * @author houyu(houyu01@baidu.com)
  */
-import {processParam} from '../../utils/query';
+import {processParam} from '../../utils/index';
 
 const lifeCyclePrototype = {
 

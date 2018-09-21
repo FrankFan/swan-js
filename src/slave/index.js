@@ -176,5 +176,14 @@ export default class Slave {
             global.PageComponent.stabilityLog = global.PageComponent.stabilityLog || new Function();
         };
         compatiblePatch();
+
+        /**
+         * 修复浏览器兼容问题
+         */
+        const browserPatch = () => {
+            // 兼容部分安卓机划动问题
+            document.body.addEventListener('touchmove', () => {});
+        };
+        browserPatch();
     }
 }

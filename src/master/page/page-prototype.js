@@ -129,19 +129,6 @@ export const createPagePrototype = (masterManager, globalSwan) => {
         createCanvasContext(...args) {
             return globalSwan.createCanvasContext.call(this, ...args);
         },
-        videoSyncCurrentTime(videoId, currentTime) {
-            const {
-                raw,
-                slaveId
-            } = this.privateProperties;
-            masterManager.communicator.sendMessage(slaveId, {
-                type: 'videoSyncCurrentTime',
-                videoId,
-                currentTime,
-                slaveId
-            });
-        },
-
         nextTick(fn) {
             masterManager.communicator
                 .onMessage(`nextTick:${this.privateProperties.slaveId}`, () => fn(), {
@@ -192,15 +179,19 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             rendered(params) {
                 this._onReady({});
             },
+
             onPageRender(params) {
                 this.privateMethod.registerCustomComponents.call(this, params.customComponents);
             },
+
             reachBottom(params) {
                 this._reachBottom(params);
             },
+
             onPageScroll(params) {
                 this._onPageScroll(params.event);
             },
+
             share(params, from) {
                 this._share({
                     from: from || 'button',
@@ -247,10 +238,11 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                 const selectorArr = selector.split(' ');
                 // 从右向左，先取出所有符合最后条件的集合
                 const topSelector = selectorArr.pop();
+
                 const judgeComponentMatch = (component, selector, ownerId) => {
                     return (component.nodeId === selector.replace(/^#/, '') || component.className.split(' ')
                         .find(className => {
-                            return className.replace(/\w+__/g, '') === selector.replace(/^\./, '');
+                            return className.replace(/^[^$]*?__/g, '') === selector.replace(/^\./, '');
                         })) && (component.ownerId === ownerId || ownerId === '*');
                 };
                 // 依据某一个条件(className或nodeId)，选择出符合条件的组件实例列表
@@ -258,6 +250,7 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                     .filter(component => judgeComponentMatch(component, selector, nodeId));
                 // 选择出的符合最后条件的集合
                 const selectedComponents = findInComponentList(componentList, topSelector);
+
                 // 针对某一个组件，从下向上遍历选择器，确定该组件是否符合条件
                 const findReverse = (selectorArr, selectedComponent, index) => {
                     if (index < 0) {
