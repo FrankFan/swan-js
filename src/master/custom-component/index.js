@@ -26,8 +26,6 @@ export default class VirtualComponentFactory {
             ...instanceProperties,
             ...this.getBuiltInMethods()
         };
-        // 将merge好的数据绑定到实例上
-        this.bindDataToInstance(ClassEntity.properties, ClassEntity.data, instanceProperties.data, initialInstance);
         // 一些特殊处理的属性，不应直接merge
         const specielProps = ['data', 'properties'];
         // 创建一个自定义组件的句柄实例
@@ -37,8 +35,12 @@ export default class VirtualComponentFactory {
                 instance[propName] = deepClone(ClassEntity[propName]);
                 return instance;
             }, initialInstance);
+        // 将behaviors合并到组件中
         const decoratedInstance = this.mergeBehaviors(instance, instance.behaviors);
+        // 将方法绑定到实例上
         this.bindMethodsToInstance(decoratedInstance.methods, decoratedInstance);
+        // 将merge好的数据绑定到实例上
+        this.bindDataToInstance(ClassEntity.properties, ClassEntity.data, instanceProperties.data, instance);
         return decoratedInstance;
     }
 
@@ -56,22 +58,15 @@ export default class VirtualComponentFactory {
      */
     bindDataToInstance(properties, initData, instanceData, initialInstance) {
         const instanceProperties = deepClone(properties);
-        // 将原型的properties与传入的props融合一下
-        if (instanceProperties) {
-            for (const prop in instanceData) {
-                if (!instanceProperties[prop]) {
-                    instanceProperties[prop] = {};
-                }
-                instanceProperties[prop].value = instanceData[prop];
-                if (instanceProperties[prop].value !== instanceData[prop]
-                   && instanceProperties[prop].observer) {
-                    instanceProperties[prop].observer.call(initialInstance, instanceData[prop]);
-                }
-            }
-        }
         // 将properties与data进行融合
         const initDataObj = this.dataConverter(instanceProperties, initData, initialInstance);
+        // 将原型的properties与传入的props融合一下
         initialInstance['_data'] = new Data(initDataObj);
+        if (instanceData) {
+            for (const prop in instanceData) {
+                initialInstance['_data'].set(prop, instanceData[prop]);
+            }
+        }
         Object.defineProperty(initialInstance, 'data', {
             get() {
                 return this._data.raw;
@@ -104,19 +99,24 @@ export default class VirtualComponentFactory {
         for (const name in props) {
             Object.defineProperty(instanceData, name, {
                 get() {
-                    return this['_' + name] || props[name].value;
+                    return this['__' + name] || props[name].value;
                 },
                 set(value) {
-                    this['_' + name] = value;
                     const observer = props[name].observer;
-                    if (typeof observer === 'function') {
-                        observer.call(context, value);
+                    const oldValue = this[name];
+                    if (oldValue !== value) {
+                        setTimeout(() => {
+                            if (typeof observer === 'function') {
+                                observer.call(context, value, oldValue);
+                            }
+                            else if (typeof observer === 'string'
+                                && typeof context[observer] === 'function'
+                            ) {
+                                context[observer].call(context, value, oldValue);
+                            }
+                        }, 0);
                     }
-                    if (typeof observer === 'string'
-                        && typeof context[observer] === 'function'
-                    ) {
-                        context[observer].call(context, value);
-                    }
+                    this['__' + name] = value;
                 },
                 enumerable: true
             });
@@ -230,7 +230,7 @@ export default class VirtualComponentFactory {
      * @param {string} componentPath - 组件的路径(当作组件的唯一标识)
      * @return {class} 注册好的类
      */
-    defineVirtualComponent(componentProto, componentPath = global.__swanRoute) {
+    defineVirtualComponent(componentProto, componentPath = window.__swanRoute) {
         const componentDefaultProto = {
             properties: {},
             data: {},
@@ -239,7 +239,8 @@ export default class VirtualComponentFactory {
         this.virtualClassInfos[componentPath] = {
             componentProto: {
                 ...componentDefaultProto,
-                ...componentProto
+                ...componentProto,
+                usingComponents: window.usingComponents || []
             }
         };
     }
@@ -344,8 +345,15 @@ export default class VirtualComponentFactory {
              * @return {Object} 该类组件的数据
              */
             getCustomComponentsData(componentPathSet = [], communicator) {
-                // this.privateMethod.listenCustomComponentEvents.call(this, communicator);
-                return componentPathSet.reduce((componentsData, componentPath) => {
+                const getComponentPath = (componentPathSet = []) => {
+                    return componentPathSet.reduce((mergedSet, componentPath) => {
+                        const componentClass = virtualComponentFactory.getComponentInstance(componentPath);
+                        const usingComponents = getComponentPath(componentClass.usingComponents);
+                        return mergedSet.concat(componentPath).concat(usingComponents);
+                    }, []);
+                };
+                const mergedComponentPaths = getComponentPath(componentPathSet);
+                return mergedComponentPaths.reduce((componentsData, componentPath) => {
                     componentsData[componentPath] = virtualComponentFactory.getComponentData(componentPath);
                     return componentsData;
                 }, {});
@@ -399,9 +407,11 @@ export default class VirtualComponentFactory {
                         parentId,
                         pageinstance: this
                     });
-                    callMethodSafty(this.privateProperties.customComponents[nodeId], 'created');
-                    callMethodSafty(this.privateProperties.customComponents[nodeId], 'attached');
-                    callMethodSafty(this.privateProperties.customComponents[nodeId], 'ready');
+                    setTimeout(() => {
+                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'created');
+                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'attached');
+                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'ready');
+                    }, 0);
                 }
                 catch (e) {
                     console.error(e);

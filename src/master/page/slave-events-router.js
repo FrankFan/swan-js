@@ -124,25 +124,7 @@ export default class SlaveEventsRouter {
     bindEnviromentEvents() {
         this.masterManager.swaninterface
         .bind('sharebtn', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'share', {}, null, 'menu');
-        })
-        .bind('live', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'live', {}, event);
-        })
-        .bind('video', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'videoEventsDispatch', {}, event);
-        })
-        .bind('map', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'mapEventsDispatch', {}, event);
-        })
-        .bind('camera', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'cameraEventsDispatch', {}, event);
-        })
-        .bind('ARCamera', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'arCameraEventsDispatcher', {}, event);
-        })
-        .bind('webview', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'webviewNAEventsDispatch', {}, event);
+            this.callEventOccurredPageMethod(event.wvID, 'share', {}, event, 'menu');
         })
         .bind('accountChange', event => {
             this.dispatchAllSlaveEvent('accountChange');
