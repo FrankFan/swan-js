@@ -2,11 +2,11 @@
  * @file page类的原型对象
  * @author houyu(houyu01@baidu.com)
  */
-import {
-    initLifeCycle
-} from './life-cycle';
+import {initLifeCycle} from './life-cycle';
+import {builtInBehaviorsAction} from '../custom-component/inner-behaviors';
 
 const noop = () => {};
+const SETDATA_THROTTLE_TIME = 10;
 /**
  * 创建一个用户的page对象的原型单例
  * @param {Object} [masterManager] masterManager底层接口方法
@@ -44,14 +44,35 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             const callback = typeof value === 'function' ? value : cb;
             const pageUpdateStart = Date.now() + '';
 
-            // 先set到本地，然后通知slave更新视图
-            this.sendMessageToCurSlave({
-                type: `${type}Data`,
-                slaveId,
-                setObject,
-                pageUpdateStart,
-                options
-            });
+            // 暂时只优化自定义组件的数据设置，进行throttle
+            if (type === 'setCustomComponent') {
+                this.operationSet = this.operationSet || [];
+                this.operationSet.push({
+                    setObject,
+                    options,
+                    pageUpdateStart
+                });
+                clearTimeout(this.operationTimmer);
+                this.operationTimmer = setTimeout(() => {
+                    // 先set到本地，然后通知slave更新视图
+                    this.sendMessageToCurSlave({
+                        slaveId,
+                        type: `${type}Data`,
+                        operationSet: this.operationSet
+                    });
+                    this.operationSet = [];
+                }, SETDATA_THROTTLE_TIME);
+            }
+            else {
+                // 先set到本地，然后通知slave更新视图
+                this.sendMessageToCurSlave({
+                    type: `${type}Data`,
+                    slaveId,
+                    setObject,
+                    pageUpdateStart,
+                    options
+                });
+            }
             // 更新data
             for (const path in setObject) {
                 raw[type] && raw[type](path, setObject[path]);
@@ -136,17 +157,55 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                 });
         },
 
+        /**
+         * 页面级选择某个(id、class)全部的自定义组件
+         *
+         * @param {string} selector - 待选择的自定义组件id
+         * @return {Array} - 所选的全部自定义组件集合
+         */
         selectAllComponents(selector) {
             return this.privateMethod
                 .getComponentsFromList(this.privateProperties.customComponents, selector, '*');
         },
 
+        /**
+         * 页面级选择某个(id、class)第一个自定义组件
+         *
+         * @param {string} selector - 待选择的自定义组件id
+         * @return {Object} - 自定义组件被拦截的export输出 | 所选的自定义组件实例
+         */
         selectComponent(selector) {
-            return this.selectAllComponents(selector)[0];
+            const selectRes = this.selectAllComponents(selector)[0];
+            // 当自定义组件中包含内置behavior时, 进行拦截操作
+            const exportRes = builtInBehaviorsAction('swanComponentExport', selectRes);
+            return exportRes.isBuiltInBehavior ?  exportRes.resData : selectRes;
         },
 
         // page实例中的私有方法合集
         privateMethod: {
+
+            /**
+             * 发送初始数据到当前Page对应的slave上
+             *
+             * @param {Object} [appConfig] - 发送初始化数据时携带的appConfig信息
+             */
+            sendInitData(appConfig) {
+                masterManager.communicator.sendMessage(
+                    this.privateProperties.slaveId,
+                    {
+                        type: 'initData',
+                        path: 'initData',
+                        value: this.data,
+                        extraMessage: {
+                            componentsData: this.privateMethod.getCustomComponentsData
+                                .call(this, this.usingComponents, masterManager.communicator)
+                        },
+                        slaveId: this.privateProperties.slaveId,
+                        appConfig
+                    }
+                );
+            },
+
             navigate(params) {
                 switch (params.openType) {
                     case 'navigate':
@@ -176,6 +235,7 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                         break;
                 }
             },
+
             rendered(params) {
                 this._onReady({});
             },
@@ -193,10 +253,15 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             },
 
             share(params, from) {
-                this._share({
-                    from: from || 'button',
-                    target: params
-                });
+                // share有两种： menu/button。右上角系统分享from="menu"，button按钮from=undefined
+                //      menu时候回传字段：from、有webview时候还需回传webViewUrl
+                //      button时候回传两个字段：from、target
+                let data = {
+                    from: from || 'button'
+                };
+                data.from === 'menu' && params.webViewUrl && (data.webViewUrl = params.webViewUrl);
+                data.from === 'button' && (data.target = params);
+                this._share(data);
             },
             pullDownRefresh(params) {
                 this._pullDownRefresh(params);
@@ -246,7 +311,7 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                         })) && (component.ownerId === ownerId || ownerId === '*');
                 };
                 // 依据某一个条件(className或nodeId)，选择出符合条件的组件实例列表
-                const findInComponentList = (componentList, selector) => Object.values(componentList)
+                const findInComponentList = (componentList, selector) => Object.values(componentList || {})
                     .filter(component => judgeComponentMatch(component, selector, nodeId));
                 // 选择出的符合最后条件的集合
                 const selectedComponents = findInComponentList(componentList, topSelector);

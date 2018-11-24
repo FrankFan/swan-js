@@ -2,7 +2,7 @@
  * @file communication for two 'webviews', this is a symmetric action
  * @author houyu(houyu01@baidu.com)
  */
-import EventsEmitter from '@baidu/events-emitter';
+import EventsEmitter from '../events-emitter';
 
 export default class Communicator extends EventsEmitter {
     constructor(swaninterface, options) {
@@ -18,6 +18,11 @@ export default class Communicator extends EventsEmitter {
     sendMessage(slaveId, message = {}) {
         if (!message.type) {
             return Promise.reject({message: 'error'});
+        }
+        // V8中slaveId为数字无法sendMessage
+        /* globals swanGlobal */
+        if (swanGlobal) {
+            slaveId += '';
         }
         return this.swaninterface.invoke('postMessage', slaveId, message);
     }

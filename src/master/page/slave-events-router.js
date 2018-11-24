@@ -16,18 +16,20 @@ export default class SlaveEventsRouter {
         this.history = masterManager.navigator.history;
         this.slaveCommunicator = masterManager.communicator;
         this.pageLifeCycleEventEmitter = pageLifeCycleEventEmitter;
-        swanEvents('master_preload_construct_slave_events_router');
+        swanEvents('masterPreloadConstructSlaveEventsRouter');
     }
+
     /**
      * 初始化所有页面级相关事件的绑定
      */
     initbindingEvents() {
         this.bindPrivateEvents();
         this.bindDeveloperEvents();
-        this.bindEnviromentEvents();
+        this.bindEnvironmentEvents();
         this.bindLifeCycleEvent(this.pageLifeCycleEventEmitter);
-        swanEvents('master_preload_init_binding_events');
+        swanEvents('masterPreloadInitBindingEvents');
     }
+
     /**
      * 调用发生事件的页面的同名方法
      *
@@ -44,6 +46,7 @@ export default class SlaveEventsRouter {
         }
         return null;
     }
+
     /**
      * 向所有slave，派发事件
      *
@@ -56,11 +59,15 @@ export default class SlaveEventsRouter {
             slave.callPrivatePageMethod(methodName, options, ...args);
         });
     }
+
     /**
      * 框架使用的私有的事件的绑定
      */
     bindPrivateEvents() {
         this.slaveCommunicator.onMessage('abilityMessage', event => {
+            if (event.value.type === 'rendered') {
+                return;
+            }
             try {
                 this.callEventOccurredPageMethod(event.slaveId, event.value.type, {}, event.value.params);
             }
@@ -70,6 +77,21 @@ export default class SlaveEventsRouter {
         });
     }
 
+    /**
+     * 保证onShow执行在onReady之前
+     */
+    pageRendered(currentSlaveId) {
+        this.slaveCommunicator.onMessage('abilityMessage', events => {
+            if (Object.prototype.toString.call(events) !== '[object Array]') {
+                events = [events];
+            }
+            events.forEach(event => {
+                if (event.value.type === 'rendered' && event.slaveId === currentSlaveId) {
+                    this.callEventOccurredPageMethod(event.slaveId, event.value.type, {}, event.value.params);
+                }
+            });
+        }, {listenPreviousEvent: true});
+    }
 
     /**
      * 调用用户在page实例上挂载的方法
@@ -82,7 +104,7 @@ export default class SlaveEventsRouter {
     callPageMethod(slaveId, methodName, ...args) {
         const occurredSlave = this.history.seek(slaveId);
         if (occurredSlave) {
-            const occurredSlavePageObject = occurredSlave.userPageInstance.pageObj;
+            const occurredSlavePageObject = occurredSlave.userPageInstance;
             if (typeof occurredSlavePageObject[methodName] === 'function') {
                 try {
                     return occurredSlavePageObject[methodName](...args);
@@ -96,11 +118,34 @@ export default class SlaveEventsRouter {
     }
 
     /**
+     * 通知页面装载的自定义组件生命周期, 目前仅有show和hide
+     *
+     * @param {string} slaveId - 实例页面的slaveId
+     * @param {string} methodName - [show | hide]
+     * @param  {...*} args - 透传参数
+     */
+    callPageCustomComponentMethod(slaveId, methodName, ...args) {
+        const occurredSlave = this.history.seek(slaveId);
+        if (occurredSlave) {
+            const customComponents = occurredSlave.userPageInstance.privateProperties.customComponents;
+            if (customComponents) {
+                Object.keys(customComponents).forEach(customComponentId => {
+                    const customComponent = customComponents[customComponentId];
+                    customComponent.pageLifetimes
+                    && customComponent.pageLifetimes[methodName]
+                    && customComponent.pageLifetimes[methodName].call(customComponent, ...args);
+                });
+            }
+        }
+        return null;
+    }
+
+    /**
      * 绑定开发者绑定的events
      */
     bindDeveloperEvents() {
         this.slaveCommunicator.onMessage('event', event => {
-            const eventOccurredPageObject = this.history.seek(event.slaveId).getUserPageInstance().pageObj;
+            const eventOccurredPageObject = this.history.seek(event.slaveId).getUserPageInstance();
             if (event.customEventParams) {
                 const nodeId = event.customEventParams.nodeId;
                 const reflectComponent = eventOccurredPageObject.privateProperties.customComponents[nodeId];
@@ -121,7 +166,7 @@ export default class SlaveEventsRouter {
      * 用于接收协议事件
      *
      */
-    bindEnviromentEvents() {
+    bindEnvironmentEvents() {
         this.masterManager.swaninterface
         .bind('sharebtn', event => {
             this.callEventOccurredPageMethod(event.wvID, 'share', {}, event, 'menu');
@@ -149,11 +194,25 @@ export default class SlaveEventsRouter {
             // 对于客户端事件做一次中转，因为前端有特殊逻辑处理(onShow必须在onLoad之后)
             const detectOnShow = event => {
                 if (event.params.eventName === 'onLoad') {
+                    let rendered = false;
+
+                    // 兼容客户端在清除历史后首次进入小程序不派发onShow的问题
+                    const renderTimeout = setTimeout(()=>{
+                        if (!rendered) {
+                            this.pageRendered(event.params.slaveId);
+                            rendered = true;
+                        }
+                    }, 1000);
+
                     this.masterManager.lifeCycleEventEmitter.onMessage('onShow' + event.params.slaveId, paramsQueue => {
                         // 筛选出本次的onShow的对应参数
                         const e = [].concat(paramsQueue).filter(params => +params.event.wvID === +event.params.slaveId)
                             .slice(-1).map(params => params.event)[0];
                         this.callPageMethod(event.params.slaveId, '_onShow', {}, e);
+                        !rendered && this.pageRendered(event.params.slaveId);
+                        rendered = true;
+                        clearTimeout(renderTimeout);
+                        this.callPageCustomComponentMethod(event.params.slaveId, 'show', {}, e);
                     }, {listenPreviousEvent: true});
                 }
             };
@@ -161,20 +220,21 @@ export default class SlaveEventsRouter {
         }, {listenPreviousEvent: true});
 
         pageLifeCycleEventEmitter.onMessage('onTabItemTap', ({event}) => {
-            this.callPageMethod(event.wvID, '_onTabItemTap', {}, event);
+            this.callPageMethod(event.wvID, '_onTabItemTap', event);
         }, {listenPreviousEvent: true});
 
         this.masterManager.lifeCycleEventEmitter.onMessage('onHide', e => {
             let event = e.event;
             this.callPageMethod(event.wvID, '_onHide', {}, event);
+            this.callPageCustomComponentMethod(event.wvID, 'hide', {}, event);
         }, {listenPreviousEvent: true});
 
         this.masterManager.swaninterface
-        .bind('onTabItemTap', () => {
-            pageLifeCycleEventEmitter.fireMessage({
-                type: 'onTabItemTap',
-                event
+            .bind('onTabItemTap', event => {
+                pageLifeCycleEventEmitter.fireMessage({
+                    type: 'onTabItemTap',
+                    event
+                });
             });
-        });
     }
 }

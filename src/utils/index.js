@@ -5,6 +5,14 @@
 import {Data} from './data';
 import Loader from './loader';
 
+// 旧调起协议特征 `://v19`
+const OLD_LAUNCH_SCHEME_REGEX = /:\/\/v[0-9]+/;
+const OLD_SCHEME_PARAMS_REGEX = /params=({.*})/; // params=
+
+// 新调起协议特征 `//swan/xxx/xxx?xxx`
+const NEW_SCHEME_PARAM_REGEX = /\/\/swan\/[0-9a-z_A-Z]+\/?(.*?)\?(.*)$/;
+const NEW_EXTRA_PARAM_REGEX = /(_baiduboxapp|callback|upgrade).*?(&|$)/g;
+
 // const basePath = window.basePath;
 export const loader = new Loader();
 export {Share} from './share';
@@ -14,7 +22,7 @@ export * from './path';
 
 export const getParams = query => {
     if (!query) {
-        return { };
+        return {};
     }
 
     return (/^[?#]/.test(query) ? query.slice(1) : query)
@@ -28,34 +36,153 @@ export const getParams = query => {
                 params[key] = value;
             }
             return params;
-        }, { });
+        }, {});
 };
 
-export const processParam = param => {
-    const originScheme = param.appInfo.appLaunchScheme || '';
-    if (/:\/\/v[0-9]+/.test(originScheme) || !originScheme) {
-        return param;
+
+/**
+ * 获取首页地址
+ * @return {string} 首页地址
+ */
+function getIndexPath() {
+    try {
+        const appConfig = JSON.parse(global.appConfig);
+        const index = appConfig.pages[0];
+        const tabBarIndex = appConfig.tabBar
+            && appConfig.tabBar.list
+            && appConfig.tabBar.list[0]
+            && appConfig.tabBar.list[0].pagePath;
+
+        return tabBarIndex || index;
     }
-    const processSchemeRegx = /(_baiduboxapp|callback|upgrade).*?(&|$)/g;
-    const schemeRegx = /\/\/swan\/[0-9a-z_A-Z]+\/(.*?)\?(.*)$/;
-    const scheme = originScheme.replace(processSchemeRegx, '');
-    const analysis = scheme.match(schemeRegx);
-    const path = analysis[1];
-    const queryStr = analysis[2];
-    const queryObj = getParams(queryStr);
-    const pathQuery = {
-        path: path,
-        query: queryObj
+    catch (e) {
+        console.error(e);
+        return '';
+    }
+}
+
+/**
+ * 从旧调起协议中获取params参数
+ *
+ * @param originScheme 调起协议
+ * @return {Object} 从旧协议中提取出的参数对象
+ * @return {{path: string, query: {}, extraData: *, navi: string} | {}}
+ *          path: 调起协议的path,；query: 调起协议的query； navi: 有值代表小程序之间的调起； extraData: 小程序之间的调起时传递的数据
+ */
+function getParamsFromOldScheme(originScheme) {
+    let path;
+    let query = {};
+    let navi = '';
+    let extraData = {};
+
+    // 获取协议字符串中的params字符串
+    let paramsRegexResult = originScheme.match(OLD_SCHEME_PARAMS_REGEX);
+    if (!paramsRegexResult) {
+        return {};
+    }
+
+    let paramsStr = paramsRegexResult[1];
+
+    // 解析params字符串，提取 path,query,navi,extraData 字段
+    try {
+        let paramsObj = JSON.parse(paramsStr);
+        let fullPath = paramsObj.path || '';
+        extraData = paramsObj.extraData || {};
+        navi = paramsObj.navi || '';
+
+        // eg: home/index/index?id=2
+        if (fullPath) {
+            let pathRegexResult = fullPath.match(/(.*)\?(.*)/);
+            path = pathRegexResult ? pathRegexResult[1] : fullPath;
+            query = pathRegexResult ? getParams(pathRegexResult[2]) : {};
+        }
+        else {
+            // 默认首页地址作为path
+            path = getIndexPath();
+        }
+    }
+    catch (e) {
+        console.error(e);
+    }
+
+    return {
+        path,
+        query,
+        navi,
+        extraData
     };
-    param.appInfo = Object.assign(param.appInfo, pathQuery);
-    return param;
+}
+
+/**
+ * 从新调起协议中获取 path 和 query
+ *
+ * @param originScheme 调起协议
+ * @return {Object} path和query组成的对象
+ */
+function getParamsFromNewScheme(originScheme) {
+    const scheme = originScheme.replace(NEW_EXTRA_PARAM_REGEX, '');
+    const paramsRegexResult = scheme.match(NEW_SCHEME_PARAM_REGEX);
+
+    const path = paramsRegexResult ? paramsRegexResult[1] : '';
+    const query = paramsRegexResult ? getParams(paramsRegexResult[2]) : {};
+
+    return {
+        path: path ? path : getIndexPath(),
+        query
+    };
+}
+
+/**
+ * 处理onAppLaunch、onAppShow、onAppHide的参数：从新旧调起协议中提取 path 和 query 和 extraData
+ *
+ * 旧调起协议格式 eg：
+ * baiduboxapp://v19/swan/launch?params={"appKey":"xxx","path":"pages/home/home?id=3","extraData":{"foo":"baidu"},"appid":"xxx","navi":"naviTo","url":"pages/home/home?id=3"}&callback=_bdbox_js_328&upgrade=0
+ *
+ * 新调起协议格式 eg:
+ * "baiduboxapp://swan/<appKey>/pages/home/home/?id=3&_baiduboxapp={"from":"","ext":{}}&callback=_bdbox_js_275&upgrade=0"
+ *
+ * @param {Object} appInfo 待处理的appInfo
+ */
+export const processParam = appInfo => {
+    let originScheme = (appInfo && appInfo.appLaunchScheme) || '';
+    if (!originScheme) {
+        return;
+    }
+    originScheme = decodeURIComponent(originScheme);
+
+    // 从协议中获取 path，query，extraData，navi
+    let params = {};
+    if (OLD_LAUNCH_SCHEME_REGEX.test(originScheme)) {
+        params = getParamsFromOldScheme(originScheme);
+    }
+    else {
+        params = getParamsFromNewScheme(originScheme);
+    }
+    appInfo = Object.assign(appInfo, params);
+
+    // 新旧场景值的兼容，当是16为场景值的时候，取前8位
+    let scene = appInfo.scene ? '' + appInfo.scene : '';
+    appInfo.scene = scene.length === 16 ? scene.slice(0, 8) : scene;
+
+    // 如果是从小程序跳转来的，则增加引用信息referrerInfo
+    appInfo.srcAppId && (appInfo.referrerInfo = {
+        appId: appInfo.srcAppId,
+        extraData: appInfo.extraData
+    });
+
+    // 新增appURL字段用于app onShow透传给开发者
+    appInfo.appURL = originScheme.replace(NEW_EXTRA_PARAM_REGEX, '');
 };
 
-export const noop = () => {};
+
+export const noop = () => {
+};
 
 export const getValueSafety = (data, path) => {
     return (new Data(data)).get(path);
 };
+
+export const convertToCamelCase = str => str.replace(/-([a-z])/g, (all, first) => first.toUpperCase());
 
 /**
  * 用于判断是否为值相同数组（若为对象数组，则对指定key执行比较）
@@ -115,6 +242,86 @@ export const isEqualObject = (x = {}, y = {}) => {
 };
 
 /**
+ * underscore函数提取, 用于判断两个值是否相等
+ *
+ * @param {*} one - 目标值
+ * @param {*} other - 对比值
+ * @param {Array} oneStack 储存one递归比较过程中的值
+ * @param {Array} otherStack 储存other递归比较过程中的值
+ * @return {boolean} 比较结果，true表示相同，false为不同
+ */
+export const isEqual = (one, other, oneStack, otherStack) => {
+    if (one === other) return one !== 0 || 1 / one === 1 / other;
+    if (one == null || other == null) return false;
+    if (one !== one) return other !== other;
+    var type = typeof one;
+    if (type !== 'function' && type !== 'object' && typeof other != 'object') return false;
+    // one 和 other 的内部属性 [[class]] 相同时 返回 true
+    var className = toString.call(one);
+    if (className !== toString.call(other)) return false;
+    switch (className) {
+        case '[object RegExp]':
+        case '[object String]':
+            return '' + one === '' + other;
+        case '[object Number]':
+            if (+one !== +one) return +other !== +other;
+            return +one === 0 ? 1 / +one === 1 / other : +one === +other;
+        case '[object Date]':
+        case '[object Boolean]':
+            return +one === +other;
+    }
+    var areArrays = className === '[object Array]';
+    // 不是数组
+    if (!areArrays) {
+        // 过滤掉两个函数的情况
+        if (typeof one != 'object' || typeof other != 'object') return false;
+        var oneCtor = one.constructor,
+            otherCtor = other.constructor;
+        // oneCtor 和 otherCtor 必须都存在并且都不是 Object 构造函数的情况下，oneCtor 不等于 otherCtor， 那这两个对象就不想等
+        if (oneCtor !== otherCtor
+            && !(Object.prototype.toString.call(oneCtor) === '[object Function]'
+                && oneCtor instanceof oneCtor
+                && Object.prototype.toString.call(otherCtor) === '[object Function]'
+                && otherCtor instanceof otherCtor)
+            && ('constructor' in one && 'constructor' in other)) {
+            return false;
+        }
+    }
+    oneStack = oneStack || [];
+    otherStack = otherStack || [];
+    var length = oneStack.length;
+    // 检查是否有循环引用的部分
+    while (length--) {
+        if (oneStack[length] === one) {
+            return otherStack[length] === other;
+        }
+    }
+    oneStack.push(one);
+    otherStack.push(other);
+    // 数组判断
+    if (areArrays) {
+        length = one.length;
+        if (length !== other.length) return false;
+        while (length--) {
+            if (!isEqual(one[length], other[length], oneStack, otherStack)) return false;
+        }
+    }
+    else {
+        var keys = Object.keys(one),
+            key;
+        length = keys.length;
+        if (Object.keys(other).length !== length) return false;
+        while (length--) {
+            key = keys[length];
+            if (!(other.hasOwnProperty(key) && isEqual(one[key], other[key], oneStack, otherStack))) return false;
+        }
+    }
+    oneStack.pop();
+    otherStack.pop();
+    return true;
+};
+
+/**
  * 深度assign的函数
  * @param {Object} targetObject 要被拷贝的目标对象
  * @param {Object} originObject 拷贝的源对象
@@ -122,9 +329,11 @@ export const isEqualObject = (x = {}, y = {}) => {
  */
 export const deepAssign = (targetObject = {}, originObject) => {
     const originType = Object.prototype.toString.call(originObject);
-    if (originType === '[object Array]'
-        || (originType === '[object Object]' && originObject.constructor === Object)
-    ) {
+    if (originType === '[object Array]') {
+        targetObject = originObject.slice(0);
+        return targetObject;
+    }
+    else if (originType === '[object Object]' && originObject.constructor === Object) {
         for (const key in originObject) {
             targetObject[key] = deepAssign(targetObject[key], originObject[key]);
         }

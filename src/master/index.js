@@ -5,7 +5,7 @@
  */
 import {getAppMethods} from './app';
 import {Navigator} from './navigator';
-import EventsEmitter from '@baidu/events-emitter';
+import EventsEmitter from '../utils/events-emitter';
 import swanEvents from '../utils/swan-events';
 import {define, require} from '../utils/module';
 import Communicator from '../utils/communication';
@@ -17,32 +17,81 @@ import {loader} from '../utils';
 export default class Master {
 
     constructor(context, swaninterface, swanComponents) {
-        swanEvents('master_preload_start');
+        swanEvents('masterPreloadStart');
         this.handleError(context);
         this.swaninterface = swaninterface;
         this.swanComponents = swanComponents;
         this.pagesQueue = {};
-        this.navigator = new Navigator(swaninterface);
+        this.navigator = new Navigator(swaninterface, context);
         this.communicator = new Communicator(swaninterface);
-        swanEvents('master_preload_communicator_listened');
+        swanEvents('masterPreloadCommunicatorListened');
 
         this.swanEventsCommunicator = new EventsEmitter();
-        this.virtualComponentFactory = new VirtualComponentFactory();
+        this.virtualComponentFactory = new VirtualComponentFactory(swaninterface);
 
         // 监听app、page所有生命周期事件
         this.bindLifeCycleEvents();
         // 监听所有的slave事件
-        this.initEvents();
+        const allSlaveEventEmitters = slaveEventInit(this);
+
+        this.pageLifeCycleEventEmitter = allSlaveEventEmitters.pageLifeCycleEventEmitter;
 
         // 装饰当前master的上下文(其实就是master的window，向上挂方法/对象)
         this.context = this.decorateContext(context);
 
+        // 解析宿主包
+        this.useExtension();
+
         // 监听appReady
         this.listenAppReady();
         // 适配环境
-        this.adaptEnviroment();
-        swanEvents('master_preload_get_mastermanager');
-        swanEvents('master_preload_end');
+        this.adaptEnvironment();
+        swanEvents('masterPreloadGetMastermanager');
+        swanEvents('masterPreloadEnd');
+    }
+
+    /**
+     * 预下载分包
+     */
+    preLoadSubPackage() {
+        const appConfig = JSON.parse(global.appConfig);
+        //配置项格式校验
+        if ((!appConfig.preloadRule || !appConfig.subPackages)
+            || typeof appConfig.preloadRule !== 'object'
+            || !(appConfig.subPackages instanceof Array)) {
+            return;
+        }
+
+        // 获得网络状态
+        swan.getNetworkType({
+            success: function (res) {
+                let packages = [];
+                let rootConfigs = appConfig.subPackages.map(v => v.root);
+                //遍历配置项
+                Object
+                    .keys(appConfig.preloadRule)
+                    .forEach(key => {
+                        let item = appConfig.preloadRule[key];
+                        //配置项格式校验
+                        if (!(item.packages instanceof Array)) {
+                            return;
+                        }
+                        //预下载分包
+                        item.packages.forEach(rootName => {
+                            // 校验是否已定义此项分包，为用户配置容错
+                            rootConfigs.includes(rootName)
+                                // 校验是否配置重复
+                                && !packages.includes(rootName)
+                                // 校验网络状态
+                                && (res.networkType === 'wifi' || item.network === 'all')
+                                && packages.push(rootName)
+                                && swan.loadSubPackage({
+                                        root: rootName
+                                    });
+                        })
+                    });
+            }
+        });
     }
 
     /**
@@ -51,14 +100,74 @@ export default class Master {
     listenAppReady() {
         this.swaninterface.bind('AppReady', event => {
             if (event.devhook === 'true') {
-                loader.loadjs('../swan-devhook/master.js');
+                if (swanGlobal) {
+                    loader.loadjs('./swan-devhook/master.js');
+                } else {
+                    loader.loadjs('../swan-devhook/master.js');
+                }
             }
-            swanEvents('master_active_start');
+            swanEvents('masterActiveStart');
             // 给三方用的，并非给框架用，请保留
             this.context.appConfig = event.appConfig;
             // 初始化master的入口逻辑
             this.initRender(event);
+            this.preLoadSubPackage();
         });
+    }
+
+    /**
+     * 向boxjs中注入底层方法，供调用
+     *
+     * @param {Object} service - 宿主extension中的service对象
+     */
+    injectHostMethods(service) {
+        let {hostMethodDescriptions = []} = service;
+        try {
+            this.swaninterface.boxjs.extend(
+                hostMethodDescriptions.map(description => {
+                    // 默认args直接传data即可
+                    let {args = [{name: 'data', value: 'Object='}]} = hostMethodDescriptions;
+                    // 默认的name就是description本身，如果开发者有特殊要求会写成对象
+                    let {name = description} = description;
+                    // 最后配置文件要用的配置
+                    return {args, name, path: name, authority: 'v26/swan'};
+                })
+            );
+        } catch (ex) {}
+    }
+
+    /**
+     * 使用宿主的extension包
+     */
+    useExtension() {
+        let ENV_VARIABLES = {};
+        try {
+            // 获取客户端给出的初始化信息
+            ENV_VARIABLES = Object.assign(ENV_VARIABLES, JSON.parse(window._naSwan.getEnvVariables()));
+        } catch (ex) {
+            // 没有extension包的情况下直接返回
+            return false;
+        }
+
+         // 加载js
+        loader.loadjs(`${ENV_VARIABLES.sdkExtension}/service.js`)
+            .then(() => {
+                // 模块引入
+                let service = require('swan-extension-service');
+                let nameSpace = service.name;
+                // API挂载
+                this.context.swan[nameSpace] = this.context.swan[nameSpace] || {...service.methods};
+                // 注入底层方法
+                this.injectHostMethods(service);
+                // 统计逻辑
+                service.customLog(EventsEmitter.merge(
+                    this.pageLifeCycleEventEmitter,
+                    this.appLifeCycleEventEmitter,
+                    this.swanEventsCommunicator,
+                    this.context.swanEvents
+                ));
+            })
+            .catch(console.error);
     }
 
     /**
@@ -80,7 +189,7 @@ export default class Master {
         context.Component = this.virtualComponentFactory.defineVirtualComponent.bind(this.virtualComponentFactory);
         context.Behavior = this.virtualComponentFactory.defineBehavior.bind(this.virtualComponentFactory);
         Object.assign(context, this.getAppMethods());
-        swanEvents('master_preload_decorate_context');
+        swanEvents('masterPreloadDecorateContext');
         return context;
     }
 
@@ -101,16 +210,17 @@ export default class Master {
                 appRootPath: initEvent.appPath
             }
         });
-        swanEvents('master_active_init_render');
+        swanEvents('masterActiveInitRender');
         // 压入initSlave
         this.navigator.pushInitSlave({
             pageUrl: initEvent.pageUrl,
             slaveId: +initEvent.wvID,
-            root: initEvent.appPath
+            root: initEvent.root,
+            preventAppLoad: initEvent.preventAppLoad
         });
-        
+
         this.appPath = initEvent.appPath;
-        swanEvents('master_active_push_initslave');
+        swanEvents('masterActivePushInitslave');
     }
 
     /**
@@ -170,11 +280,9 @@ export default class Master {
         });
     }
 
-    initEvents() {
-        const allSlaveEvents = slaveEventInit(this);
-        this.pageLifeCycleEventEmitter = allSlaveEvents.pageLifeCycleEventEmitter;
-    }
-
+    /**
+     * 绑定生命周期事件
+     */
     bindLifeCycleEvents() {
         this.lifeCycleEventEmitter = new EventsEmitter();
         this.swaninterface.bind('lifecycle', event => {
@@ -188,18 +296,29 @@ export default class Master {
     /**
      * 适配master上下文
      */
-    adaptEnviroment() {
+    adaptEnvironment() {
         this.swaninterface.adaptMaster();
     }
+
 
     /**
      * 捕获全局错误
      * @param {Object} [global] - 全局对象
      */
     handleError(global) {
-        global.addEventListener('error', e => {
+        let errorListner = global;
+        if (swanGlobal) {
+            errorListner = swanGlobal['_naSwan'];
+        }
+        errorListner.addEventListener('error', e => {
             console.log('error:', e);
             global.myerror = e;
+            let app = global.getApp();
+            app && app._onAppError({
+                appInfo: global.appInfo || {},
+                event: e,
+                type: 'onAppError'
+            })
         });
     }
 }

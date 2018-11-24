@@ -14,6 +14,18 @@
     const filterArr = JSON.parse('<%-filter%>');
     <%-modules%>
 
+    function processTemplateModule(filterTemplateArrs, filterModule) {
+        eval(filterModule);
+        let modules = {};
+        let templateFiltersObj = {};
+        filterTemplateArrs && filterTemplateArrs.forEach(element => {
+            let {filterName, func, module} = element;
+            modules[module] = eval(module);
+            templateFiltersObj[filterName] = (...args) => modules[module][func](...args);
+        });
+        return templateFiltersObj;
+    }
+
     try {
 
         filterArr && filterArr.forEach(item => {
@@ -28,9 +40,20 @@
             // 获取所有内置组件 + 自定义组件的fragment
             const componentFragments = componentFactory.getAllComponents();
 
-            const customComponents = {};
             // 所有的自定义组件
             "#swanCustomComponentsDefine#";
+
+            // 路径与该组件映射
+            var customAbsolutePathMap = "#customAbsolutePathMap#";
+
+            // 当前页面使用的自定义组件
+            const pageUsingComponentMap = JSON.parse(`#pageUsingComponenttMap#`);
+
+            // 生成该页面引用的自定义组件
+            const customComponents = Object.keys(pageUsingComponentMap).reduce((customComponents, customName) => {
+                customComponents[customName] = customAbsolutePathMap[pageUsingComponentMap[customName]];
+                return customComponents;
+            }, {});
 
             // 启动页面渲染逻辑
             global.pageRender(pageContent, templateComponents, customComponents, filters, modules);

@@ -32,13 +32,13 @@ export default class SanFactory {
      * @param {Object} properties - 创建组件用的属性
      */
     componentDefine(componentName, componentPrototype, properties = {}) {
-
         this.componentInfos[componentName] = {
             componentPrototype,
-            classProperties: {
-                // ...dependencies,
-                ...properties.classProperties
-            }
+            ...properties
+            // classProperties: {
+            //     // ...dependencies,
+            //     ...properties.classProperties
+            // }
         };
     }
 
@@ -125,17 +125,25 @@ export default class SanFactory {
             .reduce((mergedClassProto, propName) => {
                 switch (propName) {
                     case 'constructor':
-                        mergedClassProto['constructor'] = function (options) {
-                            targetProto.constructor && targetProto.constructor.call(this, options);
-                            mergeProto.constructor && mergeProto.constructor.call(this, options);
+                    case 'detached':
+                    case 'created':
+                        mergedClassProto[propName] = function (options) {
+                            targetProto[propName] && targetProto[propName].call(this, options);
+                            mergeProto[propName] && mergeProto[propName].call(this, options);
                         };
                         break;
                     case 'computed':
-                        mergedClassProto[propName] = Object.assign(
+                        mergedClassProto['computed'] = Object.assign(
                                 {},
                                 mergedClassProto[propName],
                                 mergeProto[propName]
                             );
+                        break;
+                    case 'dependencies':
+                        mergedClassProto[propName] = (mergeProto[propName] || []).reduce((r, v, k) => {
+                            r.indexOf(v) < 0 && r.push(v);
+                            return r;
+                        }, (mergedClassProto[propName] || []));
                         break;
                     default:
                         mergedClassProto[propName] = mergeProto[propName];
@@ -186,11 +194,11 @@ export default class SanFactory {
  * @return {Object} 初始化后的componentFactory
  */
 export const getComponentFactory = (componentDefaultProps, componentProtos, behaviors) => {
-    swanEvents('slave_preload_get_component_factory');
+    swanEvents('slavePreloadGetComponentFactory');
     const sanFactory = new SanFactory(componentDefaultProps, behaviors, componentProtos);
-    swanEvents('slave_preload_define_components_start');
+    swanEvents('slavePreloadDefineComponentsStart');
     Object.keys(componentProtos)
     .forEach(protoName => sanFactory.componentDefine(protoName, componentProtos[protoName]));
-    swanEvents('slave_preload_define_components_end');
+    swanEvents('slavePreloadDefineComponentsEnd');
     return sanFactory;
 };

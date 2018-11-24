@@ -3,12 +3,13 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
-import EventsEmitter from '@baidu/events-emitter';
+import EventsEmitter from '../../utils/events-emitter';
 import SlaveEventsRouter from './slave-events-router';
 import {getPagePrototypeInstance} from './page-prototype';
 import {Data, getParams, Share, deepClone} from '../../utils';
-
+/* globals swanGlobal*/
 const pageLifeCycleEventEmitter = new EventsEmitter();
+let global = swanGlobal ? swanGlobal : window;
 
 /**
  * slave的绑定事件初始化
@@ -40,52 +41,31 @@ export const slaveEventInit = master => {
  */
 const initUserPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan, appConfig) => {
     const swaninterface = masterManager.swaninterface;
-    const appid = swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appid;
+    const appid = typeof global.__swanAppInfo === 'object'
+        ? global.__swanAppInfo.appid
+        : swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appid;
     slaveId = '' + slaveId;
-    return {
-        pageCreation() {
-            // 获取page的原型方法单例，防止对每个page都生成方法集合
-            const pagePrototype = getPagePrototypeInstance(masterManager, globalSwan, pageLifeCycleEventEmitter);
-            const [route, query] = accessUri.split('?');
-            // merge page的原型方法
-            Object.assign(pageInstance,
-                {
-                    privateProperties: {
-                        slaveId,
-                        accessUri,
-                        raw: new Data(pageInstance.data),
-                        share: new Share(swaninterface, appid, pageInstance, appConfig.pages[0])
-                    },
-                    route,
-                    options: getParams(query)
-                },
-                pagePrototype
-            );
-            swanEvents('master_active_init_user_page_instance', pageInstance);
-            // lifecycleMixin(pageInstance);
-        },
 
-        sendInitData(params) {
-            swanEvents('master_active_send_initdata_start');
-
-            masterManager.communicator.sendMessage(
+    // 获取page的原型方法单例，防止对每个page都生成方法集合
+    const pagePrototype = getPagePrototypeInstance(masterManager, globalSwan, pageLifeCycleEventEmitter);
+    const [route, query] = accessUri.split('?');
+    // merge page的原型方法
+    Object.assign(pageInstance,
+        {
+            privateProperties: {
                 slaveId,
-                {
-                    type: 'initData',
-                    value: pageInstance.data,
-                    extraMessage: {
-                        componentsData: pageInstance.privateMethod.getCustomComponentsData
-                        .call(pageInstance, this.pageObj.usingComponents, masterManager.communicator)
-                    },
-                    path: 'initData',
-                    slaveId,
-                    appConfig
-                }
-            );
-            swanEvents('master_active_send_initdata_end');
+                accessUri,
+                raw: new Data(pageInstance.data),
+                share: new Share(swaninterface, appid, pageInstance, appConfig.pages[0])
+            },
+            route,
+            options: getParams(query)
         },
-        pageObj: pageInstance
-    };
+        pagePrototype
+    );
+    swanEvents('masterActiveInitUserPageInstance', pageInstance);
+
+    return pageInstance;
 };
 
 // Page对象中，写保护的所有key
@@ -119,9 +99,10 @@ const cloneSwanPageObject = (pagePrototype = {}) => {
     });
     return newSwanObject;
 };
+
 // 当页面打开时(即slave加载完毕，通知master时)master可以将页面对应的page对象进行实例化
 export const createPageInstance = (accessUri, slaveId, appConfig) => {
-    swanEvents('master_active_get_user_page_instance');
+    swanEvents('masterActiveGetUserPageInstance');
     // 过滤传过来的originUri,临时方案；后面和生成path做个统一的方法；
     const uriPath = accessUri.split('?')[0];
     const userPageInstance = initUserPageInstance(
@@ -132,7 +113,6 @@ export const createPageInstance = (accessUri, slaveId, appConfig) => {
         global.swan,
         appConfig
     );
-    userPageInstance.pageCreation();
     return userPageInstance;
 };
 
@@ -143,9 +123,9 @@ export const createPageInstance = (accessUri, slaveId, appConfig) => {
  */
 export const getCurrentPages = () => {
     return global.masterManager.navigator.history.getAllSlaves()
-    .map(currentSlave => currentSlave.getCurrentChildren()
-        .getUserPageInstance().pageObj
-    );
+        .map(currentSlave => currentSlave.getCurrentChildren()
+            .getUserPageInstance()
+        );
 };
 
 /**
@@ -158,5 +138,6 @@ export const Page = pageObj => {
     const uri = global.__swanRoute;
     const usingComponents = global.usingComponents || [];
     const pageProto = {data: {}};
-    return global.masterManager.pagesQueue[uri] = {...pageProto, ...pageObj, uri, usingComponents};
+    global.masterManager.pagesQueue[uri] = {...pageProto, ...pageObj, uri, usingComponents};
+    return global.masterManager.pagesQueue[uri];
 };

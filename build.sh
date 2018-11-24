@@ -1,5 +1,6 @@
-npm install --registry http://registry.npm.baidu-int.com
-./node_modules/.bin/webpack
+npm install
+# ./node_modules/.bin/webpack
+npm run build
 mkdir -p output
 curPath=`pwd`
 cd ./dist/box/

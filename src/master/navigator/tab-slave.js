@@ -126,13 +126,13 @@ export default class TabSlave {
 
         // 触发被切换到的slave的onEnqueue
         toChild.setSlaveId(toId).onEnqueue()
-        .then(() => {
-            const text = this.list[webviewIndex].text || '';
-            toChild.onswitchTab({
-                webviewIndex,
-                text
+            .then(() => {
+                const text = this.list[webviewIndex].text || '';
+                toChild.onswitchTab({
+                    webviewIndex,
+                    text
+                });
             });
-        });
     }
     redirect(paramsObj) {
         return this.getCurrentChildren().redirect(paramsObj);
@@ -140,15 +140,16 @@ export default class TabSlave {
     open(paramsObj) {
         this.status = STATUE_MAP.CREATING;
         return this.getCurrentChildren().open(paramsObj)
-        .then(res => {
-            this.status = STATUE_MAP.CREATED;
-            return res;
-        });
+            .then(res => {
+                this.status = STATUE_MAP.CREATED;
+                return res;
+            });
     }
     close() {
         this.children.forEach(child => child.close());
         this.status = STATUE_MAP.CLOSED;
     }
+    
     onEnqueue(params) {
         return this.getCurrentChildren().onEnqueue(params);
     }
