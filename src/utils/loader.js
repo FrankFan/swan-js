@@ -3,8 +3,8 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from './swan-events';
-
-const doc = document;
+/* globals swanGlobal _naSwan */
+const doc = swanGlobal ? {} : document;
 export default class Loader {
     constructor(basePath = '') {
         this.basePath = basePath;
@@ -19,16 +19,26 @@ export default class Loader {
             return Promise.resolve();
         }
         return new Promise((resolve, reject) => {
-            const script = doc.createElement('script');
-            script.type = 'text/javascript';
-            script.src = loadPath;
-            script.onload = () => {
-                this.loadedResource.js[loadPath] = true;
-                action && swanEvents(action);
+            if (swanGlobal) {
+                try {
+                    _naSwan.include(loadPath);
+                } catch (e) {
+                    reject(e);
+                    console.error(e);
+                }
                 resolve();
-            };
-            script.onerror = reject;
-            doc.head.appendChild(script);
+            } else {
+                const script = doc.createElement('script');
+                script.type = 'text/javascript';
+                script.src = loadPath;
+                script.onload = () => {
+                    this.loadedResource.js[loadPath] = true;
+                    action && swanEvents(action);
+                    resolve();
+                };
+                script.onerror = reject;
+                doc.head.appendChild(script);
+            }
         });
     }
     loadcss(src, action) {

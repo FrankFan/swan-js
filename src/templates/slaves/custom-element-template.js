@@ -3,15 +3,31 @@
  * @author houyu(houyu01@baidu.com)
  */
 
-(function (global, componentFragments, globalCustomComponents) {
-
-    const customComponents = {};
+const #uniqueCustomComponentName# = ((global, componentFragments) => {
     const templateComponents = {};
+    const usingComponentMap = JSON.parse(`#usingComponentMap#`);
 
-    // 所有的自定义组件
-    "#swanCustomComponentsDefine#";
     "#swanCustomComponentTemplates#";
 
+    // filter 模块名以及对应的方法名集合
+    const filterCustomArr = JSON.parse('<%-filters%>');
+
+    // 闭包封装filter模块
+    <%-modules-%>
+
+    let modules = {};
+    let filtersObj = {};
+    filterCustomArr && filterCustomArr.forEach(element => {
+        modules[element.module] = eval(element.module);
+
+        let func = element.func;
+        let module = element.module;
+        filtersObj[element.filterName] = (...args) => {
+            return modules[module][func](...args);
+        };
+    });
+
+    const components = {...componentFragments, ...templateComponents};
     global.componentFactory.componentDefine(
         '<%-customComponentPath%>',
         Object.assign({}, componentFactory.getProtos('super-custom-component'), {
@@ -22,12 +38,18 @@
         }),
         {
             classProperties: {
-                components: {...componentFragments, ...customComponents, ...templateComponents}
+                components,
+                filters: {
+                    ...filtersObj
+                }
             }
         }
     );
 
-    globalCustomComponents['<%-customComponentName%>'] = global
-        .componentFactory.getComponents('<%-customComponentPath%>');
-
-})(global, componentFragments, customComponents);
+    Promise.resolve().then(() => {
+        for (let customName in usingComponentMap) {
+            components[customName] = customAbsolutePathMap[usingComponentMap[customName]];
+        }
+    });
+    return global.componentFactory.getComponents('<%-customComponentPath%>');
+})(global, componentFragments);

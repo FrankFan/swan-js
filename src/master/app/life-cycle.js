@@ -13,14 +13,43 @@ const lifeCyclePrototype = {
      * @return {Object} 处理后的数据
      */
     _lifeCycleParamsHandle(data) {
-        const obj = data && data.appInfo || {};
-        obj.referrerInfo = {
-            appId: obj.appId,
-            extraData: obj.extraData
-        };
-        return ['path', 'query', 'scene', 'shareTicket', 'referrerInfo']
-        .reduce((prev, cur) => (prev[cur] = obj[cur] || '', prev), {});
+        const appInfo = data && data.appInfo || {};
+
+        //  取出 appInfo 中的 path, query, scene, shareTicket
+        let result = ['path', 'query', 'scene', 'shareTicket']
+            .reduce((prev, cur) => {
+                prev[cur] = appInfo[cur] || '';
+                return prev;
+            }, {});
+
+        // 如果是从小程序跳转来的，则增加引用信息 referrerInfo
+        appInfo.srcAppId && (result.referrerInfo = appInfo.referrerInfo);
+
+        return result;
     },
+
+    /**
+     * onShow生命周期的参数的处理
+     * @param {Object} data - 待处理的数据
+     * @return {Object} 处理后的传给开发者的参数
+     * @private
+     */
+    _onAppShowLifeCycleParamsHandle(data) {
+        const result = this._lifeCycleParamsHandle(data);
+        const appInfo = data && data.appInfo || {};
+
+        // 对于 onShow，传递entryType 及 appURL信息，以增加场景触发标识参数
+        // {string} entryType 值同showBy，有'user'  | 'schema' | 'sys' 标识onShow的调起方式，'user'通过home前后台切换或者锁屏调起，'schema'是通过协议调起，'sys'为默认值(未覆盖到的打开场景)
+        // {string=} appURL showBy为schema时存在，为调起协议的完整链接
+        if (appInfo.showBy) {
+            result.entryType = appInfo.showBy;
+            if (appInfo.showBy === 'schema') {
+                result.appURL = appInfo.appURL;
+            }
+        }
+        return result;
+    },
+
 
     /**
      * 向事件流中发送生命周期消息
@@ -45,8 +74,8 @@ const lifeCyclePrototype = {
      */
     _onAppLaunch(params) {
         try {
-            const data = processParam(params);
-            this.onLaunch && this.onLaunch(this._lifeCycleParamsHandle(data));
+            processParam(params.appInfo);
+            this.onLaunch && this.onLaunch(this._lifeCycleParamsHandle(params));
         }
         catch (e) {
             console.error(e);
@@ -63,8 +92,8 @@ const lifeCyclePrototype = {
      */
     _onAppShow(params) {
         try {
-            const data = processParam(params);
-            this.onShow && this.onShow(this._lifeCycleParamsHandle(data));
+            processParam(params.appInfo);
+            this.onShow && this.onShow(this._onAppShowLifeCycleParamsHandle(params));
         }
         catch (e) {
             console.error(e);
@@ -81,8 +110,8 @@ const lifeCyclePrototype = {
      */
     _onAppHide(params) {
         try {
-            const data = processParam(params);
-            this.onHide && this.onHide(this._lifeCycleParamsHandle(data));
+            processParam(params.appInfo);
+            this.onHide && this.onHide(this._lifeCycleParamsHandle(params));
         }
         catch (e) {
             console.error(e);
@@ -98,12 +127,26 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - appError生命周期的参数
      */
     _onAppError(params) {
-        this.onError && this.onError(params);
+        this.onError && this.onError(params.event);
         this._sendAppLifeCycleMessage('onError', {
             e: params.appInfo
         });
     },
 
+    /**
+     * 页面找不到时触发
+     *
+     * @param {Object} [params] - appError生命周期的参数
+     */
+    _onPageNotFound(params) {
+        !this._hasNotFoundRedirect
+        && this.onPageNotFound
+        && this.onPageNotFound(params.event)
+        && (this._hasNotFoundRedirect = true);
+        this._sendAppLifeCycleMessage('onPageNotFound', {
+            e: params.appInfo
+        });
+    },
     /**
      * app中如果发生login的变化，则触发此函数，并携带用户信息
      *

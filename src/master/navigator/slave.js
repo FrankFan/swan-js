@@ -32,6 +32,8 @@ export default class Slave {
         this.swaninterface = swaninterface;
         this.userPageInstance = {};
         this.appRootPath = appConfig.appRootPath;
+        /* globals masterManager */
+        this.loadJsCommunicator = masterManager.communicator;
     }
     /**
      * 判断slave当前状态
@@ -128,7 +130,7 @@ export default class Slave {
      * @param {Object} params 切换tab后，客户端派发的参数
      */
     onswitchTab(params) {
-        return;
+        return undefined;
     }
     /**
      * 调用当前slave的page对象的私有方法
@@ -139,8 +141,8 @@ export default class Slave {
      * @return {*} 私有方法的return值
      */
     callPrivatePageMethod(methodName, options = {}, ...args) {
-        return this.userPageInstance.pageObj.privateMethod[methodName]
-        .call(this.userPageInstance.pageObj, ...args);
+        return this.userPageInstance.privateMethod[methodName]
+            .call(this.userPageInstance, ...args);
     }
     /**
      * 重登录到某一个特定页面
@@ -202,27 +204,79 @@ export default class Slave {
      * @return {Promise} 返回初始化之后的Promise流
      */
     init(initParams) {
+        this.isFirstPage = true;
         return Promise.resolve(initParams)
-        .then(initParams => {
-            if (initParams.root) {
-                swanEvents('master_active_init_action', Communicator.getInstance(this.swaninterface));
-                return loader.loadjs(`${this.appRootPath}/app.js`, 'master_active_app_js_loaded')
-                .then(() => {
+            .then(initParams => {
+                swanEvents('masterActiveInitAction', Communicator.getInstance(this.swaninterface));
+                if (!!initParams.preventAppLoad) {
                     return initParams;
+                }
+                const loadCommonJs = this.appConfig.splitAppJs
+                && !this.appConfig.subPackages
+                ? 'common.js' : 'app.js';
+                return loader.loadjs(`${this.appRootPath}/${loadCommonJs}`, 'masterActiveAppJsLoaded').then(() => {
+                    return this.loadJs.call(this, initParams);
                 });
-            }
-            return initParams;
-        })
-        .then(initParams => {
-            this.uri = initParams.pageUrl.split('?')[0];
-            this.accessUri = initParams.pageUrl;
-            this.slaveId = initParams.slaveId;
-            // init的事件为客户端处理，确保是在slave加载完成之后，所以可以直接派发
-            this.swaninterface.communicator.fireMessage({
-                type: `slaveLoaded${this.slaveId}`,
-                message: {slaveId: this.slaveId}
+            })
+            .then(initParams => {
+                this.uri = initParams.pageUrl.split('?')[0];
+                this.accessUri = initParams.pageUrl;
+                this.slaveId = initParams.slaveId;
+                // init的事件为客户端处理，确保是在slave加载完成之后，所以可以直接派发
+                this.swaninterface.communicator.fireMessage({
+                    type: `slaveLoaded${this.slaveId}`,
+                    message: {slaveId: this.slaveId}
+                });
+                return initParams;
             });
-            return initParams;
+    }
+
+    /**
+     * 根据app.js拆分标识加载业务逻辑
+     *
+     * @param {Object} params 加载业务逻辑的参数
+     * @return {Promise} 返回初始化之后的Promise流
+     */
+    loadJs(params) {
+        return new Promise(resolve => {
+            const loadJsRoot = !!params.root ? this.appRootPath + '/' + params.root : this.appRootPath;
+            this.appConfig.splitAppJs && !this.appConfig.subPackages
+            ? this.loadFirst(params).then(() => {
+                resolve(params);
+            })
+            : !!params.root
+            ? loader.loadjs(`${loadJsRoot}/app.js`).then(() => {
+                resolve(params);
+            }) : resolve(params);
+        });
+    }
+
+    /**
+     * 加载首页业务逻辑, 首屏渲染完成利用之前的通信方式sendLogMessage, 节省一次通信
+     *
+     * @param {Object} params 加载首屏页面业务逻辑的参数
+     * @return {Promise} 返回初始化之后的Promise流
+     */
+    loadFirst(params) {
+        this.loadJsCommunicator.onMessage('slaveAttached', event => {
+            return +event.slaveId === +this.slaveId && this.loadPages(params);
+        }, {once: true});
+        const firstPageUri = params.pageUrl.split('?')[0];
+        return loader.loadjs(`${this.appRootPath}/${firstPageUri}.js`);
+    }
+
+    /**
+     * 加载其它所有pages业务逻辑
+     *
+     * @param {Object} params 加载首屏页面业务代码的参数
+     */
+    loadPages(params) {
+        Promise.all([
+            loader.loadjs(`${this.appRootPath}/pages.js`)
+        ]).then(() => {
+            this.noticeOpenPage && this.noticeOpenPage();
+            this.noticeRedirectToPage && this.noticeRedirectToPage();
+            this.allJsLoaded = true;
         });
     }
     /**
@@ -233,7 +287,32 @@ export default class Slave {
     onEnqueue() {
         return this.createPageInstance();
     }
+
+    /**
+     * 页面打开逻辑open分支判断
+     *
+     * @param {Object} navigationParams 配置项
+     * @return {Object} 打开页面以后返回对象
+     */
     open(navigationParams) {
+        if (!!this.isFirstPage && !!this.appConfig.splitAppJs && !this.appConfig.subPackages && !this.allJsLoaded) {
+            new Promise(resolve => {
+                this.noticeOpenPage = resolve;
+            }).then(() => {
+                return this.openPage(navigationParams);
+            });
+        } else {
+            return this.openPage(navigationParams);
+        }
+    }
+
+    /**
+     * 页面真正打开的执行逻辑
+     *
+     * @param {Object} navigationParams - 打开页面参数
+     * @return {Object} 打开页面以后返回对象
+     */
+    openPage(navigationParams) {
         this.status = STATUE_MAP.CREATING;
         return new Promise((resolve, reject) => {
             this.swaninterface.invoke('navigateTo', {
@@ -265,7 +344,32 @@ export default class Slave {
             return res;
         });
     }
+
+    /**
+     * 页面打开逻辑redirect分支判断
+     *
+     * @param {Object} navigationParams - 打开页面参数
+     * @return {Object} 打开页面以后返回对象
+     */
     redirect(navigationParams) {
+        if (!!this.isFirstPage && !!this.appConfig.splitAppJs && !this.appConfig.subPackages &&  !this.allJsLoaded) {
+            new Promise(resolve => {
+                this.noticeRedirectToPage = resolve;
+            }).then(() => {
+                return this.redirectToPage(navigationParams);
+            });
+        } else {
+            return this.redirectToPage(navigationParams);
+        }
+    }
+
+    /**
+     * 真正执行页面redirect打开的执行逻辑
+     *
+     * @param {Object} navigationParams - 打开页面参数
+     * @return {Object} 打开页面以后返回对象
+     */
+    redirectToPage(navigationParams) {
         this.close();
         return new Promise((resolve, reject) => {
             this.swaninterface.invoke('redirectTo', {
@@ -310,17 +414,18 @@ export default class Slave {
         if (this.isCreated()) {
             return Promise.resolve();
         }
-        swanEvents('master_active_create_page_flow_start', {
+        swanEvents('masterActiveCreatePageFlowStart', {
             uri: this.uri
         });
         const userPageInstance = createPageInstance(this.accessUri, this.slaveId, this.appConfig);
-        const query = userPageInstance.pageObj.privateProperties.accessUri.split('?')[1];
+        const query = userPageInstance.privateProperties.accessUri.split('?')[1];
         this.setUserPageInstance(userPageInstance);
 
         try {
-            userPageInstance.pageObj._onLoad(getParams(query));
+            userPageInstance._onLoad(getParams(query));
         }
         catch (e) {
+            // avoid empty state
         }
         this.status = STATUE_MAP.CREATED;
         return this.swaninterface.invoke('loadJs', {
@@ -329,8 +434,11 @@ export default class Slave {
                 wvID: this.slaveId
             },
             success: params => {
-                swanEvents('master_active_create_page_flow_end');
-                return userPageInstance.sendInitData(params)
+                swanEvents('masterActiveCreatePageFlowEnd');
+                swanEvents('masterActiveSendInitdataStart');
+                userPageInstance.privateMethod
+                    .sendInitData.call(userPageInstance, this.appConfig);
+                swanEvents('masterActiveSendInitdataEnd');
             }
         });
     }
@@ -349,9 +457,11 @@ export default class Slave {
      */
     close() {
         try {
-            this.userPageInstance.pageObj._onUnload();
+            this.userPageInstance._onUnload();
         }
-        catch (e) {}
+        catch (e) {
+            // avoid empty state
+        }
         this.status = STATUE_MAP.CLOSED;
         return this;
     }

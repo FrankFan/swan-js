@@ -19,26 +19,29 @@ export class Share {
         this.shareConfig = this.mergeShareConfig(shareConfig, {path: initPath});
     }
     mergeShareConfig(config, options) {
-        const title = this.swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appname;
+        const title = typeof global.__swanAppInfo === 'object'
+        ? global.__swanAppInfo.appname
+        : this.swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appname;
         config = config || {...Share.shareDefaultConfig, ...{title}};
         return {...config, ...options};
     }
-    
-    getShareParams(from = 'menu', target = null) {
+
+    getShareParams({from = 'menu', target = null, webViewUrl}) {
         let shareConfig = this.shareConfig;
         if (this.pageObj.onShareAppMessage) {
-            const userShareParams = this.pageObj.onShareAppMessage({
-                from,
-                target
-            });
-            if (userShareParams && typeof userShareParams === 'object') {
+            let data = {from};
+            target && (data.target = target);
+            webViewUrl && (data.webViewUrl = webViewUrl);
+            const userShareParams = this.pageObj.onShareAppMessage(data);
+
+            if (typeof userShareParams === 'object') {
                 shareConfig = {...this.shareConfig, ...userShareParams};
             }
         }
         return shareConfig;
     }
-    shareAction({from, target}) {
-        const shareParams = this.getShareParams({from, target});
+    shareAction({from, target, webViewUrl}) {
+        const shareParams = this.getShareParams({from, target, webViewUrl});
         return new Promise((resolve, reject) => {
             global.swan.openShare({
                 ...shareParams,

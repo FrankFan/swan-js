@@ -17,7 +17,7 @@ export class Data {
         if (!exprPath) {
             return this.raw;
         }
-        return exprPath.replace(/\[(\d)\]/g, '.$1')
+        return exprPath.replace(/\[(\d+?)\]/g, '.$1')
             .split('.')
             .reduce((obj, key, idx) => {
                 return obj ? obj[key] : obj;
@@ -34,7 +34,7 @@ export class Data {
         if (!exprPath) {
             return this.raw;
         }
-        const keys = exprPath.replace(/\[(\d)\]/g, '.$1').split('.');
+        const keys = exprPath.replace(/\[(\d+?)\]/g, '.$1').split('.');
         keys.reduce((obj, key, idx) => {
             if (idx === keys.length - 1) {
                 obj[key] = value;

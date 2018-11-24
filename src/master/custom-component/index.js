@@ -3,63 +3,145 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
-import Communicator from '../../utils/communication';
-import {deepClone, deepAssign, mixin, Data} from '../../utils';
-
+import {deepClone, Data, isEqual, convertToCamelCase} from '../../utils';
+import {getPropertyVal} from '../../utils/custom-component';
+import {builtInBehaviorsAction} from './inner-behaviors';
+import {componentAttrMergeMethods, behaviorAttrMergeMethods} from './merge-behaviors';
+/* globals swanGlobal */
 export default class VirtualComponentFactory {
 
-    constructor() {
+    constructor(swaninterface) {
         this.virtualClassInfos = {};
         this.behaviorsMap = {};
-        swanEvents('master_preload_construct_virtual_component_factory');
+        this.swaninterface = swaninterface;
+        swanEvents('masterPreloadConstructVirtualComponentFactory');
     }
 
     /**
      * 创建虚拟组件实例的方法
+     *
      * @param {Object} ClassEntity - 组件的类
      * @param {Object} instanceProperties - 组件的所有实例化时需要装载的属性
      * @return {Object} 创建出来的自定义组件实例
      */
     createInstance(ClassEntity, instanceProperties) {
-        const behaviors = ClassEntity.behaviors || [];
         const initialInstance = {
             ...instanceProperties,
-            ...this.getBuiltInMethods()
+            ...this.getBuiltInMethods(this.swaninterface)
         };
         // 一些特殊处理的属性，不应直接merge
-        const specielProps = ['data', 'properties'];
+        const specialProps = ['data', 'properties'];
         // 创建一个自定义组件的句柄实例
         const instance = Object.keys(ClassEntity)
-            .filter(propName => !~specielProps.indexOf(propName))
+            .filter(propName => !~specialProps.indexOf(propName))
             .reduce((instance, propName) => {
                 instance[propName] = deepClone(ClassEntity[propName]);
                 return instance;
             }, initialInstance);
-        // 将behaviors合并到组件中
-        const decoratedInstance = this.mergeBehaviors(instance, instance.behaviors);
-        // 将方法绑定到实例上
-        this.bindMethodsToInstance(decoratedInstance.methods, decoratedInstance);
-        // 将merge好的数据绑定到实例上
-        this.bindDataToInstance(ClassEntity.properties, ClassEntity.data, instanceProperties.data, instance);
+        // 将lifetimes分解到自定义组件实例中
+        const decoratedInstance = this.bindMethodsToInstance(instance, instance.lifetimes);
+        // 将behaviors分解并merge到自定义组件实例中
+        this.mergeBehaviors(decoratedInstance, decoratedInstance.behaviors, ClassEntity);
+        // 将自定义组件中methods方法集合分解到自定义组件实例中
+        this.bindMethodsToInstance(decoratedInstance, decoratedInstance.methods);
+        // 将已merge完成的数据绑定到自定义组件实例中
+        this.bindDataToInstance(decoratedInstance, ClassEntity.properties, ClassEntity.data, instanceProperties.data);
+        if (decoratedInstance.nodeId) {
+            // Component中处理自定义组件扩展definitionFilter
+            this.definitionFilterExecuter(decoratedInstance, decoratedInstance.behaviors);
+            // 全局样式类处理
+            decoratedInstance.options
+            && decoratedInstance.options.addGlobalClass
+            && this.addGlobalClass(decoratedInstance);
+            // 外部样式类处理
+            decoratedInstance.externalClasses && this.addExternalClasses(decoratedInstance);
+            // behaviors中内置属性 swan://form-field 处理
+            decoratedInstance.behaviors && builtInBehaviorsAction('swanFormField', decoratedInstance);
+        }
         return decoratedInstance;
     }
 
-    bindMethodsToInstance(methods, initialInstance) {
+    /**
+     * 通知自定义组件内的原生组件进行全局样式类处理
+     *
+     * @param {Object} initialInstance - 自定义组件实例
+     */
+    addGlobalClass(initialInstance) {
+        initialInstance.pageinstance && initialInstance.pageinstance.sendMessageToCurSlave({
+            type: 'convertCustomComponentClass',
+            nodeId: initialInstance.nodeId,
+            extraMessage: {
+                eventType: 'addGlobalClass'
+            }
+        });
+    }
+
+    /**
+     * 相关class加工, 并通知自定义组件内的原生组件进行外部样式类处理
+     *
+     * @param {Object} initialInstance - 自定义组件实例
+     */
+    addExternalClasses(initialInstance) {
+        if (Object.prototype.toString.call(initialInstance.externalClasses) === '[object Array]') {
+            // 将Component中的externalClasses全部转换成驼峰形式
+            const cameledClasses = initialInstance.externalClasses
+                .map(externalClass => convertToCamelCase(externalClass));
+            // Component中externalClasses与其转换成驼峰命名后的映射
+            const cameledClassesMap = initialInstance.externalClasses
+                .reduce((cameledClassesMap, className) => {
+                    cameledClassesMap[className] = convertToCamelCase(className);
+                    return cameledClassesMap;
+                }, {});
+            // 挂载在自定义组件具有实际作用的classes
+            const availableClassesList = Object.keys(initialInstance.data)
+                .filter(property => cameledClasses.includes(property))
+                .map(property => initialInstance.data[property]);
+            // Component中的externalClasses与挂载在自定义组件具有实际作用class的映射
+            const convertedClassesMap = Object.keys(cameledClassesMap)
+                .reduce((convertedClassesMap, convertedClass) => {
+                    convertedClassesMap[convertedClass] = initialInstance.data[cameledClassesMap[convertedClass]];
+                    return convertedClassesMap;
+                }, {});
+
+            // 通知自定义组件内的原生组件进行外部样式类处理
+            initialInstance.pageinstance && initialInstance.pageinstance.sendMessageToCurSlave({
+                type: 'convertCustomComponentClass',
+                nodeId: initialInstance.nodeId,
+                extraMessage: {
+                    eventType: 'addExternalClasses',
+                    value: {
+                        externalClasses: initialInstance.externalClasses,
+                        availableClasses: availableClassesList,
+                        classes: convertedClassesMap
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * 将方法集合分解并merge到自定义组件实例中
+     *
+     * @param {Object} initialInstance - 自定义组件实例
+     * @param {Object} methods - 待merge的方法集合
+     */
+    bindMethodsToInstance(initialInstance, methods) {
         return Object.assign(initialInstance, methods);
     }
 
     /**
      * 绑定产生的新数据到组件实例上
-     * @param {Object} [properties] - 组件原型上的properties
-     * @param {Object} [initData] - 组件原型上的data
-     * @param {Object} [instanceData] - 组件实例中，外部传入的props
-     * @param {Object} [initialInstance] - 组件实例
-     * @return {Object} - 绑定后的实例
+     *
+     * @param {Object} initialInstance - 组件实例
+     * @param {Object} properties - 组件原型上的properties
+     * @param {Object} initData - 组件原型上的data
+     * @param {Object} instanceData - 组件实例中，外部传入的props
+     * @return {Object} 绑定后的实例
      */
-    bindDataToInstance(properties, initData, instanceData, initialInstance) {
+    bindDataToInstance(initialInstance, properties, initData, instanceData) {
         const instanceProperties = deepClone(properties);
         // 将properties与data进行融合
-        const initDataObj = this.dataConverter(instanceProperties, initData, initialInstance);
+        const initDataObj = this.dataConverter(initialInstance, instanceProperties, initData);
         // 将原型的properties与传入的props融合一下
         initialInstance['_data'] = new Data(initDataObj);
         if (instanceData) {
@@ -89,34 +171,39 @@ export default class VirtualComponentFactory {
     /**
      * 将用户设置的数据进行转换，包括将props与data进行merge，将props转换为我方代理
      *
+     * @param {Object} context - 当数据发生变化时回调的上下文
      * @param {Object} props - 用户设置的组件初始化props
      * @param {Object} data - 用户设置的组件初始化私有数据
-     * @param {Object?} context - 当数据发生变化时回调的上下文
-     * @return {Object} - merge后的data对象
+     * @return {Object} merge后的data对象
      */
-    dataConverter(props = {}, data = {}, context) {
+    dataConverter(context, props = {}, data = {}) {
         const instanceData = JSON.parse(JSON.stringify(data));
         for (const name in props) {
             Object.defineProperty(instanceData, name, {
                 get() {
-                    return this['__' + name] || props[name].value;
+                    // 此处不能以简单布尔判断, 如下前缀值判断使得用户传props值可以为false
+                    return Object.keys(this).includes(`__${name}`)
+                        ? this[`__${name}`] : getPropertyVal(props[name]);
                 },
                 set(value) {
-                    const observer = props[name].observer;
-                    const oldValue = this[name];
-                    if (oldValue !== value) {
-                        setTimeout(() => {
-                            if (typeof observer === 'function') {
-                                observer.call(context, value, oldValue);
-                            }
-                            else if (typeof observer === 'string'
-                                && typeof context[observer] === 'function'
-                            ) {
-                                context[observer].call(context, value, oldValue);
-                            }
-                        }, 0);
+                    // 当property值类型为object才进行后续的observer操作
+                    if (Object.prototype.toString.call(props[name]) === '[object Object]') {
+                        const observer = props[name].observer;
+                        const oldValue = this[name];
+                        if (!isEqual(oldValue, value)) {
+                            setTimeout(() => {
+                                if (typeof observer === 'function') {
+                                    observer.call(context, value, oldValue);
+                                }
+                                else if (typeof observer === 'string'
+                                    && typeof context[observer] === 'function'
+                                ) {
+                                    context[observer].call(context, value, oldValue);
+                                }
+                            }, 0);
+                        }
                     }
-                    this['__' + name] = value;
+                    this[`__${name}`] = value;
                 },
                 enumerable: true
             });
@@ -125,44 +212,37 @@ export default class VirtualComponentFactory {
     }
 
     /**
-     * 将behaviors融合到target对象上
+     * 在Component构造方法中, 将behaviors融合到target对象上
      *
-     * @param {Object} target 目标对象
-     * @param {Array} behaviors 需要merge的behaviors的集合
-     * @return {Object} 融合了behaviors过后的目标对象
+     * @param {Object} target - 目标对象
+     * @param {Array} behaviors - 需要merge的behaviors的集合
+     * @return {Object} 已merge完behaviors的目标对象
      */
-    mergeBehaviors(target, behaviors = []) {
-        const lifeCycleMethod = (oldCreated, newCreated) => function () {
-                newCreated.call(this);
-                oldCreated.call(this);
-            };
-        const attributesMergeMethods = {
-            properties: (oldProperties, newProperties) => ({...oldProperties, ...newProperties}),
-            data: (oldData, newData) => deepAssign(oldData, newData),
-            methods: (oldMethods, newMethods) => ({...oldMethods, ...newMethods}),
-            behaviors: (oldBehaviors, newBehaviors) => newBehaviors,
-            created: lifeCycleMethod,
-            attached: lifeCycleMethod,
-            ready: lifeCycleMethod,
-            detached: lifeCycleMethod,
-            defaultAttribute: (oldAttribute, newAttribute) => newAttribute
-        };
-
-        behaviors.forEach(behavior => {
-            for (const attribute in behavior) {
-                const proccessMethod = attributesMergeMethods[attribute] || attributesMergeMethods['defaultAttribute'];
-                target[attribute] = proccessMethod(target[attribute] || {}, behavior[attribute] || {});
-            }
-        });
+    mergeBehaviors(target, behaviors = [], ClassEntity) {
+        const specialProps = ['data', 'properties'];
+        behaviors
+            .filter(behavior => Object.prototype.toString.call(behavior) === '[object Object]')
+            .forEach(behavior => {
+                for (const attribute in behavior) {
+                    if (componentAttrMergeMethods[attribute]) {
+                        !~specialProps.indexOf(attribute)
+                        ? target[attribute]
+                            = componentAttrMergeMethods[attribute](target[attribute], behavior[attribute])
+                        : ClassEntity[attribute]
+                            = componentAttrMergeMethods[attribute](ClassEntity[attribute], behavior[attribute]);
+                    }
+                }
+            });
         return target;
     }
 
     /**
      * 获取用户组件实例需要的所有方法
-     * @param {Object} instanceProperties - 组件的所有实例化时需要装载的属性
+     *
+     * @param {Object} swaninterface - 相关接口方法
      * @return {Object} 组件上所有需要挂载的方法
      */
-    getBuiltInMethods() {
+    getBuiltInMethods(swaninterface) {
         return {
             setData(path, value, cb) {
                 this.pageinstance
@@ -180,29 +260,40 @@ export default class VirtualComponentFactory {
                     this._data.set(path, setObject[path]);
                 }
             },
-            triggerEvent(eventName, eventDetail = {}) {
+            triggerEvent(eventName, eventData = {}) {
                 this.pageinstance
                 .sendMessageToCurSlave({
                     type: 'triggerEvents',
                     nodeId: this.nodeId,
                     eventName,
-                    eventDetail
+                    eventData
                 });
             },
             dispatch(name, value) {
-                const parentComponent = this.pageinstance.privateProperties.customComponents[this.ownerId];
-                if (parentComponent.messages) {
-                    const receiver = parentComponent.messages[name] || parentComponent.messages['*'];
-                    if (typeof receiver === 'function') {
-                        receiver.call(
-                            parentComponent,
-                            {target: this, value: value, name: name}
-                        );
-                        return;
+                try {
+                    const parentComponent = this.pageinstance.privateProperties.customComponents[this.ownerId];
+                    if (parentComponent && parentComponent.messages) {
+                        const receiver = parentComponent.messages[name] || parentComponent.messages['*'];
+                        if (typeof receiver === 'function') {
+                            receiver.call(
+                                parentComponent,
+                                {target: this, value: value, name: name}
+                            );
+                            return;
+                        }
                     }
+                    parentComponent && parentComponent.dispatch(name, value);
+                } catch (err) {
+                    console.error(err);
                 }
-                parentComponent && parentComponent.dispatch(name, value);
             },
+
+            /**
+             * 组件级选择某个(id、class)自定义组件的全部集合
+             *
+             * @param {string} selector - 待选择的自定义组件id或class
+             * @return {Array} 所选的自定义组件全部集合
+             */
             selectAllComponents(selector) {
                 return this.pageinstance.privateMethod.getComponentsFromList(
                     this.pageinstance.privateProperties.customComponents,
@@ -210,16 +301,34 @@ export default class VirtualComponentFactory {
                     this.nodeId
                 );
             },
+
+            /**
+             * 组件级选择某个(id、class)第一个自定义组件
+             *
+             * @param {string} selector - 待选择的自定义组件id或class
+             * @return {Object} 自定义组件被拦截的export输出 | 所选的自定义组件实例
+             */
             selectComponent(selector) {
-                return this.selectAllComponents(selector)[0];
+                const selectRes = this.selectAllComponents(selector)[0];
+                // 内置属性swan://component-export拦截处理
+                const exportRes = builtInBehaviorsAction('swanComponentExport', selectRes);
+                return exportRes.isBuiltInBehavior ?  exportRes.resData : selectRes;
             },
             createSelectorQuery() {
-                return window.swan.createSelectorQuery().in(this);
+                return swaninterface.swan.createSelectorQuery().in(this);
+            },
+            createIntersectionObserver(options) {
+                return swaninterface.swan.createIntersectionObserver(this, options);
             },
             _propsChange({key, value}) {
                 this._data.set(key, value);
             },
-            hasBehavior() {}
+            hasBehavior() {
+                return !!this.behaviors && !!this.behaviors.length;
+            },
+            groupSetData(cb) {
+                typeof cb === 'function' && cb.call(this);
+            }
         };
     }
 
@@ -230,7 +339,7 @@ export default class VirtualComponentFactory {
      * @param {string} componentPath - 组件的路径(当作组件的唯一标识)
      * @return {class} 注册好的类
      */
-    defineVirtualComponent(componentProto, componentPath = window.__swanRoute) {
+    defineVirtualComponent(componentProto, componentPath = swanGlobal ? swanGlobal.__swanRoute : window.__swanRoute) {
         const componentDefaultProto = {
             properties: {},
             data: {},
@@ -240,44 +349,54 @@ export default class VirtualComponentFactory {
             componentProto: {
                 ...componentDefaultProto,
                 ...componentProto,
-                usingComponents: window.usingComponents || []
+                usingComponents: (swanGlobal ? swanGlobal.usingComponents : window.usingComponents) || []
             }
         };
     }
 
     /**
-     * 将behaviors mixin到组件的原型中
-     * @param {Object} componentProto 需要被装饰的组件原型
-     * @param {Object} behaviors 需要装饰的behaviors的集合
+     * 全局函数Behavior处理初始化对象
+     *
+     * @param {Object} behaviorProto - 初始化处理Behavior数据
+     * @return {Object} 经过处理之后的Behavior数据
      */
-    mixinBehaviors(componentProto, behaviors) {
-        const behaviorsType = Object.prototype.toString.call(behaviors);
-        const lifeCycleMethods = ['attached', 'created', 'ready', 'detached'];
-        if (behaviorsType === '[object Array]') {
-            behaviors.forEach(behavior => {
-                this.mixinBehaviors(componentProto, behavior);
-            });
-        }
-        else if (behaviorsType === '[object Object]') {
-            for (const key in behaviors) {
-                if (lifeCycleMethods.find(key)) {
-                    componentProto[key] = (...args) => {
-                        componentProto[key].call(componentProto, ...args);
-                        behaviors[key].call(componentProto, ...args);
-                    };
-                }
-                else {
-                    componentProto[key] = mixin(componentProto[key], behaviors[key]);
-                }
-            }
-        }
-    }
-
     defineBehavior(behaviorProto) {
+        // 将lifeTimes中融合的生命周期分解到实例中, 便于自定义组件实例只处理已分解的生命周期
+        this.bindMethodsToInstance(behaviorProto, behaviorProto.lifetimes);
+        // behaviors中的自定义组件扩展definitionFilter先行处理
+        this.definitionFilterExecuter(behaviorProto, behaviorProto.behaviors);
         if (Object.prototype.toString.call(behaviorProto.behaviors) === '[object Array]') {
-            return mixin({}, behaviorProto, ...behaviorProto.behaviors);
+            behaviorProto.behaviors
+                .filter(behavior => Object.prototype.toString.call(behavior) === '[object Object]')
+                .forEach(behavior => {
+                    for (const attribute in behavior) {
+                        if (behaviorAttrMergeMethods[attribute]) {
+                            behaviorProto[attribute]
+                            = behaviorAttrMergeMethods[attribute](behaviorProto[attribute], behavior[attribute]);
+                        }
+                    }
+                });
         }
         return behaviorProto;
+    }
+
+    /**
+     * 定义阶段处理自定义组件扩展definitionFilter
+     * 
+     * @param {Object} instance - 当前组件或behavior实例
+     * @param {Array} behaviorDependence - 当前实例依赖的behaviors
+     */
+    definitionFilterExecuter(instance, behaviorDependence = []) {
+        behaviorDependence
+            .filter(behavior => behavior.definitionFilter)
+            .forEach(behavior => {
+                const innerBehaviors = behavior.behaviors || [];
+                const definitionFilterArr = innerBehaviors
+                    .filter(singleBehavior => singleBehavior.definitionFilter)
+                    .map(singleBehavior => singleBehavior.definitionFilter);
+                typeof behavior.definitionFilter === 'function'
+                && behavior.definitionFilter.call(this, instance, definitionFilterArr)
+            });
     }
 
     /**
@@ -345,10 +464,14 @@ export default class VirtualComponentFactory {
              * @return {Object} 该类组件的数据
              */
             getCustomComponentsData(componentPathSet = [], communicator) {
-                const getComponentPath = (componentPathSet = []) => {
+                const getComponentPath = (componentPathSet = [], visitedPaths = []) => {
                     return componentPathSet.reduce((mergedSet, componentPath) => {
+                        if (~visitedPaths.indexOf(componentPath)) {
+                            return mergedSet.concat(componentPath);
+                        }
                         const componentClass = virtualComponentFactory.getComponentInstance(componentPath);
-                        const usingComponents = getComponentPath(componentClass.usingComponents);
+                        visitedPaths.push(componentPath);
+                        const usingComponents = getComponentPath(componentClass.usingComponents, visitedPaths);
                         return mergedSet.concat(componentPath).concat(usingComponents);
                     }, []);
                 };
@@ -387,26 +510,34 @@ export default class VirtualComponentFactory {
             /**
              * 注册一个自定义组件
              *
-             * @param {Array} componentInfo - 组件的注册信息
+             * @param {Object} componentInfo - 组件的注册信息
+             * @param {string} componentInfo.componentName - 组件名称
+             * @param {Object} componentInfo.data - 组件的初始化数据(merge过用户传递的props之后)
+             * @param {string} componentInfo.className - 自定义组件的类
              * @param {string} componentInfo.nodeId - 组件的唯一标识
+             * @param {string} componentInfo.id - 组件id
+             * @param {string} componentInfo.is - 组件文件路径
+             * @param {string} componentInfo.dataset - 组件节点dataset
              * @param {string} componentInfo.ownerId - 组件实例的父组件标识
              * @param {string} componentInfo.parentId - 组件实例的视图父元素
-             * @param {Object} componentInfo.data - 组件的初始化数据(merge过用户传递的props之后)
              * @param {string} componentInfo.componentPath - 需要初始化的组件的路径
-             * @param {string} componentInfo.className - 自定义组件的类
              */
-            registerCustomComponent({nodeId, ownerId, parentId, data, componentPath, className}) {
+            registerCustomComponent({componentName, data, className, nodeId, id, is, dataset, ownerId, parentId, componentPath}) {
                 try {
                     this.privateProperties.customComponents = this.privateProperties.customComponents || {};
                     this.privateProperties.customComponents[nodeId] = virtualComponentFactory
-                    .getComponentInstance(componentPath, {
-                        data,
-                        className,
-                        nodeId,
-                        ownerId,
-                        parentId,
-                        pageinstance: this
-                    });
+                        .getComponentInstance(componentPath, {
+                            componentName,
+                            data,
+                            className,
+                            nodeId,
+                            id,
+                            is,
+                            dataset,
+                            ownerId,
+                            parentId,
+                            pageinstance: this
+                        });
                     setTimeout(() => {
                         callMethodSafty(this.privateProperties.customComponents[nodeId], 'created');
                         callMethodSafty(this.privateProperties.customComponents[nodeId], 'attached');

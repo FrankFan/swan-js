@@ -90,15 +90,16 @@ const lifeCyclePrototype = {
 
     _onTabItemTap(params) {
         const proccessedParams = [].concat(params)[0];
-        this.onTabItemTap && this.onTabItemTap(proccessedParams.e);
+        this.onTabItemTap && this.onTabItemTap(proccessedParams);
         this._sendPageLifeCycleMessage('onTabItemTap', params);
     },
 
     _share(params) {
+        this._sendPageLifeCycleMessage('beforeShare', params);
         // 分享不需要清除之前postMessage过来的数据
         this.privateProperties.share.shareAction(params)
-        .then(res => this._sendPageLifeCycleMessage('shareSuccess', res))
-        .catch(err => this._sendPageLifeCycleMessage('shareFailed', err));
+            .then(res => this._sendPageLifeCycleMessage('shareSuccess', res))
+            .catch(err => this._sendPageLifeCycleMessage('shareFailed', err));
         this._sendPageLifeCycleMessage('shareAction', params);
     },
 
