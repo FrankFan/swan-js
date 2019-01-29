@@ -8,10 +8,13 @@ import {define, require} from '../utils/module';
 import swanEvents from '../utils/swan-events';
 import {getComponentFactory} from './component-factory';
 import {setPageBasePath, isIOS} from '../utils/platform';
+import Extension from '../extension';
+/* globals Bdbox_android_jsbridge */
 
 /**
  * @class slave的入口
  */
+
 export default class Slave {
 
     constructor(global, swaninterface, swanComponents) {
@@ -21,77 +24,43 @@ export default class Slave {
         this.context.define = define;
         this.context.san = san;
         this.context.swan = swaninterface.swan;
-        this.context.swaninterface = swaninterface; //远程调试用
+        this.context.swaninterface = swaninterface; // 远程调试用
         this.swaninterface = swaninterface;
         this.swanComponents = swanComponents;
-        this.useExtension();
+        this.openSourceDebugger();
+        this.extension = new Extension(global, swaninterface);
+        this.registerComponents();
         this.listenPageReady(global);
+        this.extension.use(this);
         swanEvents('slavePreloadEnd');
     }
 
     /**
-     * 向boxjs中注入底层方法，供调用
-     *
-     * @param {Object} service - 宿主extension中的service对象
+     * 开源宿主调试工具debug
      */
-    injectHostMethods(service) {
-        let {hostMethodDescriptions = []} = service;
+    openSourceDebugger() {
         try {
-            this.swaninterface.boxjs.extend(
-                hostMethodDescriptions.map(description => {
-                    // 默认args直接传data即可
-                    let {args = [{name: 'data', value: 'Object='}]} = hostMethodDescriptions;
-                    // 默认的name就是description本身，如果开发者有特殊要求会写成对象
-                    let {name = description} = description;
-                    // 最后配置文件要用的配置
-                    return {args, name, path: name, authority: 'v26/swan'};
-                })
-            );
-        } catch (ex) {}
-    }
-    /**
-     * 解析宿主扩展文件
-     */
-    useExtension() {
-        let ENV_VARIABLES = {};
-        try {
-            // 获取客户端给出的初始化信息
-            ENV_VARIABLES = Object.assign(ENV_VARIABLES, JSON.parse(window._naSwan.getEnvVariables()));
-        } catch (ex) {
-            // 没有extension包的情况下直接返回，并注册其他组件。
-            this.registerComponents();
+            const {
+                isDebugSdk,
+                ctsServerAddress = {},
+                host, // IDE所在pc的host
+                port, // IDE所在pc的port
+                udid
+            } = JSON.parse(window._naSwan.getEnvVariables());
+            if (!!isDebugSdk) {
+                // 提供使用的udid和所通信pc地址，便于ws连接
+                window._openSourceDebugInfo = {host, port: +port, udid};
+                // cts 性能测试
+                const slaveCtsAddrList = ctsServerAddress.slave;
+                slaveCtsAddrList
+                && Array.isArray(slaveCtsAddrList)
+                && slaveCtsAddrList.forEach(src => {
+                    src.trim() !== '' && loader.loadjs(`${src}?t=${Date.now()}`);
+                });
+            }
+        } catch (err) {
             return false;
         }
-        // 加载css
-        loader.loadcss(`${ENV_VARIABLES.sdkExtension}/view.css`);
-        // 加载js
-        this.loadingExtension = Promise
-            .all([
-                loader.loadjs(`${ENV_VARIABLES.sdkExtension}/service.js`),
-                loader.loadjs(`${ENV_VARIABLES.sdkExtension}/view.js`)
-            ])
-            .then(() => {
-                // 模块引入
-                const service = require('swan-extension-service');
-                const view = require('swan-extension-view');
-                const nameSpace = service.name;
-                // API挂载
-                this.context.swan[nameSpace] = this.context.swan[nameSpace] || {...service.methods};
-                // 注入底层方法
-                this.injectHostMethods(service);
-                // 组件注册
-                this.extensionComponents = {};
-                Object
-                    .keys(view.components)
-                    .forEach(ComponentName => {
-                        this.extensionComponents[nameSpace + '-' + ComponentName] = view.components[ComponentName];
-                    });
-            })
-            .catch(console.error)
-            .finally(()=>{
-                this.registerComponents();
-            });
-
     }
 
     /**
@@ -100,20 +69,36 @@ export default class Slave {
      */
     listenPageReady(global) {
         swanEvents('slavePreloadListened');
+        // 控制是否开启预取initData的开关
+        let advancedInitDataSwitch = false;
         this.swaninterface.bind('PageReady', event => {
-            swanEvents('slaveActiveStart',{
+            swanEvents('slaveActiveStart', {
                 pageInitRenderStart: Date.now() + ''
             });
+            let initData = event.initData;
+            if (initData) {
+                try {
+                    initData = JSON.parse(initData);
+                    this.initData = initData;
+                }
+                catch (e) {
+                    initData = null;
+                }
+            }
+            if (advancedInitDataSwitch) {
+                global.advancedInitData = this.initData;
+            }
+
             const appPath = event.appPath;
             const pagePath = event.pagePath.split('?')[0];
             const onReachBottomDistance = event.onReachBottomDistance;
 
             // 给框架同学用的彩蛋
             const corePath = global.location.href
-                            .replace(/[^\/]*\/[^\/]*.html$/g, '')
-                            .replace(/^file:\/\//, '');
+                .replace(/[^\/]*\/[^\/]*.html$/g, '')
+                .replace(/^file:\/\//, '');
             global.debugDev = `deployPath=${appPath}\ncorePath=${corePath}`;
-            
+
             // 给框架同学使用的刷新彩蛋
             sessionStorage.setItem('debugInfo', `${appPath}|debug|${pagePath}`);
 
@@ -125,9 +110,9 @@ export default class Slave {
             };
             let loadHook = () => {
                 return loader.loadjs('../swan-devhook/slave.js').then(() => {
-                    /* eslint-disable */
+                    /* eslint-disable fecs-camelcase, no-undef */
                     __san_devtool__.emit('san', san);
-                    /* eslint-enable */
+                    /* eslint-enable fecs-camelcase, no-undef */
                 });
             };
 
@@ -166,14 +151,17 @@ export default class Slave {
             versionCompare,
             boxVersion
         });
-        this.extensionComponents = this.extensionComponents || {};
         swanEvents('slavePreloadGetComponents');
         const componentDefaultProps = {swaninterface};
-        const componentFactory = getComponentFactory(componentDefaultProps, {...componentProtos, ...this.extensionComponents}, this.swanComponents.getBehaviorDecorators());
+        const componentFactory = getComponentFactory(componentDefaultProps,
+            {...componentProtos},
+            this.swanComponents.getBehaviorDecorators());
 
         global.componentFactory = componentFactory;
 
         global.pageRender = (pageTemplate, templateComponents, customComponents, filters, modules) => {
+            // 用于记录用户模板代码在执行pageRender之前的时间消耗，包括了pageContent以及自定义模板的代码还有filter在加载过程中的耗时
+            global.FeSlaveSwanJsParseEnd = Date.now();
             let filtersObj = {};
             filters && filters.forEach(element => {
                 let func = element.func;
@@ -212,6 +200,8 @@ export default class Slave {
             // 调用页面对象的加载完成通知
             page.slaveLoaded();
             swanEvents('slaveActiveUserPageSlaveloaded');
+            // 用于记录用户模板代码在开始执行到监听initData事件之前的耗时
+            global.FeSlaveSwanJsInitEnd = Date.now();
 
             // 监听等待initData，进行渲染
             page.communicator.onMessage('initData', params => {
@@ -238,10 +228,22 @@ export default class Slave {
 
                 }
                 catch (e) {
-                    console.log(e)
+                    console.log(e);
                     global.errorMsg['renderError'] = e;
                 }
             }, {listenPreviousEvent: true});
+
+            // 如果已经有端上传来的initData数据，直接渲染
+            if (global.advancedInitData) {
+                let initData = global.advancedInitData;
+                page.communicator.fireMessage({
+                    type: 'initData',
+                    value: initData.data,
+                    extraMessage: {
+                        componentsData: initData.componentsData
+                    }
+                });
+            }
 
             swanEvents('slaveActiveJsParsed');
             if (global.PageComponent) {
@@ -249,20 +251,6 @@ export default class Slave {
             }
         };
 
-        let debugInfo = '';
-        try {
-            debugInfo = sessionStorage.getItem('debugInfo');
-        }
-        catch (e) {
-            console.log('no-debuging')
-        }
-        if (debugInfo) {
-            const event = new Event('PageReady');
-            event.appPath = debugInfo.split('|debug|')[0];
-            event.onReachBottomDistance = '50';
-            event.pagePath = debugInfo.split('|debug|')[1];
-            document.dispatchEvent(event);
-        }
         const compatiblePatch = () => {
             global.PageComponent = global.componentFactory.getComponents('super-page');
             global.PageComponent.components = global.componentFactory.getComponents();

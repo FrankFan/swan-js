@@ -2,8 +2,7 @@
  * @file swan-events/index.js
  */
 import EventsEmitter from '../events-emitter';
-/* globals swanGlobal*/
-const global = swanGlobal ? swanGlobal : window;
+const global = window;
 global.swanEvents = global.swanEvents || new EventsEmitter();
 
 export default function (eventName, data){

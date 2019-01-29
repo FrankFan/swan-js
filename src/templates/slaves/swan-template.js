@@ -3,7 +3,6 @@
  * @author houyu(houyu01@baidu.com)
  */
 ((global, san) => {
-
     global.errorMsg = [];
 
     // 自定义模板区域

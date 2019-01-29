@@ -11,18 +11,19 @@ const innerBehaviorsMap = {
      * @param {Object} selectRes - 选择的组件实例
      */
     swanFormField(initialInstance) {
-        const hasTheBehavior = initialInstance.behaviors.some(behavior =>
-            /\s*swan:\/\/form-field\s*/.test(behavior));
+        const hasTheBehavior = initialInstance.behaviors
+            .some(behavior => /\s*swan:\/\/form-field\s*/.test(behavior));
         if (!hasTheBehavior) {
             return;
         }
-        initialInstance.pageinstance.sendMessageToCurSlave({
-            type: 'customComponentInnerBehavior',
-            nodeId: initialInstance.nodeId,
-            extraMessage: {
-                eventType: 'insertFormField'
-            }
-        });
+        initialInstance.pageinstance
+            .sendMessageToCurSlave({
+                type: 'customComponentInnerBehavior',
+                nodeId: initialInstance.nodeId,
+                extraMessage: {
+                    eventType: 'insertFormField'
+                }
+            });
     },
 
     /**
@@ -32,8 +33,8 @@ const innerBehaviorsMap = {
      */
     swanComponentExport(initialInstance) {
         if (initialInstance && initialInstance.behaviors) {
-            const hasTheBehavior = initialInstance.behaviors.some(behavior =>
-                /\s*swan:\/\/component-export\s*/.test(behavior));
+            const hasTheBehavior = initialInstance.behaviors
+                .some(behavior => /\s*swan:\/\/component-export\s*/.test(behavior));
             if (hasTheBehavior && initialInstance.export) {
                 return {
                     isBuiltInBehavior: true,
@@ -45,4 +46,6 @@ const innerBehaviorsMap = {
     }
 }
 
-export const builtInBehaviorsAction = (behavior, ...args) => innerBehaviorsMap[behavior](...args);
+export const builtInBehaviorsAction = (behavior, ...args) => {
+    return innerBehaviorsMap[behavior](...args);
+};

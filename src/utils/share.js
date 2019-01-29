@@ -3,6 +3,7 @@
  * @author houyu(houyu01@baidu.com)
  *          jianglian(jianglian@baidu.com)
  */
+import {getAppInfo} from './index';
 
 export class Share {
     static shareDefaultConfig = {
@@ -19,9 +20,7 @@ export class Share {
         this.shareConfig = this.mergeShareConfig(shareConfig, {path: initPath});
     }
     mergeShareConfig(config, options) {
-        const title = typeof global.__swanAppInfo === 'object'
-        ? global.__swanAppInfo.appname
-        : this.swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appname;
+        const title = getAppInfo(this.swaninterface).appname;
         config = config || {...Share.shareDefaultConfig, ...{title}};
         return {...config, ...options};
     }
@@ -47,12 +46,10 @@ export class Share {
                 ...shareParams,
                 success(res) {
                     shareParams.success(res);
-                    shareParams.complete();
                     resolve(res);
                 },
                 fail(err) {
                     shareParams.fail(err);
-                    shareParams.complete();
                     reject(err);
                 }
             });

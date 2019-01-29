@@ -2,11 +2,12 @@
  * @file swan's slave leaf class
  * @author houyu(houyu01@baidu.com)
  */
-import {createPageInstance} from '../page';
-import {STATUE_MAP} from './slave-common-parts';
+import {createPageInstance, getInitDataAdvanced} from '../page';
+import {STATUS_MAP} from './slave-common-parts';
 import swanEvents from '../../utils/swan-events';
 import Communicator from '../../utils/communication';
 import {getParams, loader, executeWithTryCatch} from '../../utils';
+import splitAppAccessory from '../../utils/splitapp-accessory';
 
 
 export default class Slave {
@@ -27,7 +28,7 @@ export default class Slave {
         this.uri = uri.split('?')[0];
         this.accessUri = uri;
         this.slaveId = slaveId;
-        this.status = STATUE_MAP.INITED;
+        this.status = STATUS_MAP.INITED;
         this.appConfig = appConfig;
         this.swaninterface = swaninterface;
         this.userPageInstance = {};
@@ -41,7 +42,7 @@ export default class Slave {
      * @return {boolean} 当前状态
      */
     isCreated() {
-        return this.status === STATUE_MAP.CREATED;
+        return this.status === STATUS_MAP.CREATED;
     }
     /**
      * 获取当前slave的uri
@@ -77,7 +78,7 @@ export default class Slave {
     setSlaveId(slaveId) {
         // 如果新的slaveid与之前的slaveid不相等，证明本slave重新被创建，则进行一次重置
         if (+this.slaveId !== +slaveId) {
-            this.status = STATUE_MAP.CREATING;
+            this.status = STATUS_MAP.CREATING;
         }
         this.slaveId = slaveId;
         return this;
@@ -151,42 +152,76 @@ export default class Slave {
      * @return {Promise} relaunch处理的事件流
      */
     reLaunch(navigationParams) {
+        return new Promise(resolve => {
+                if (splitAppAccessory.allJsLoaded) {
+                    resolve();
+                } else {
+                    splitAppAccessory.routeResolve = resolve;
+                }
+            })
+            .then(() => {
+                return this.reLaunchPage(navigationParams);
+            });
+    }
+
+    /**
+     * 真正reLaunch到某个特定页面
+     *
+     * @param {Object} navigationParams navigation跳转的参数
+     * @return {Promise} relaunch处理的事件流
+     */
+    reLaunchPage(navigationParams) {
         if (!navigationParams.url) {
             navigationParams.url = this.getFrontUri();
         }
-        this.status = STATUE_MAP.CREATING;
+        this.status = STATUS_MAP.CREATING;
+        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
         return new Promise((resolve, reject) => {
-            this.swaninterface.invoke('reLaunch', {
-                ...navigationParams,
-                ...{
-                    success: res => {
-                        executeWithTryCatch(navigationParams.success, null, 'success api execute error');
-                        resolve(res);
-                    },
-                    fail: res => {
-                        executeWithTryCatch(navigationParams.fail, null, 'fail api execute error');
-                        reject(res);
-                    },
-                    complete: res => {
-                        executeWithTryCatch(navigationParams.complete, null, 'complete api execute error');
+                this.swaninterface.invoke('reLaunch', {
+                    ...navigationParams,
+                    initData: {data, componentsData},
+                    ...{
+                        success: res => {
+                            executeWithTryCatch(
+                                navigationParams.success,
+                                null,
+                                'success api execute error'
+                            );
+                            resolve(res);
+                        },
+                        fail: res => {
+                            executeWithTryCatch(
+                                navigationParams.fail,
+                                null,
+                                'fail api execute error'
+                            );
+                            reject(res);
+                        },
+                        complete: res => {
+                            executeWithTryCatch(
+                                navigationParams.complete,
+                                null,
+                                'complete api execute error'
+                            );
+                        }
                     }
+                });
+            })
+            .then(res => {
+                if (res.root) {
+                    return loader
+                        .loadjs(`${this.appRootPath}/${res.root}/app.js`)
+                        .then(() => res);
                 }
+                return res;
+            })
+            .then(res => {
+                this.slaveId = res.wvID;
+                this.uri = navigationParams.url.split('?')[0];
+                this.accessUri = navigationParams.url;
+                this.setSlaveUri(navigationParams.url);
+                return res;
             });
-        })
-        .then(res => {
-            if (res.root) {
-                return loader.loadjs(`${this.appRootPath}/${res.root}/app.js`)
-                .then(() => res);
-            }
-            return res;
-        })
-        .then(res => {
-            this.slaveId = res.wvID;
-            this.uri = navigationParams.url.split('?')[0];
-            this.accessUri = navigationParams.url;
-            this.setSlaveUri(navigationParams.url);
-            return res;
-        });
     }
     /**
      * 判断当前slave是否某一特定slave
@@ -195,7 +230,8 @@ export default class Slave {
      * @return {boolean} 是否是当前slave
      */
     isTheSlave(tag) {
-        return this.uri.split('?')[0] === ('' + tag).split('?')[0] || +this.slaveId === +tag;
+        return this.uri.split('?')[0] === ('' + tag).split('?')[0]
+            || +this.slaveId === +tag;
     }
     /**
      * 初始化为第一个页面
@@ -205,7 +241,8 @@ export default class Slave {
      */
     init(initParams) {
         this.isFirstPage = true;
-        return Promise.resolve(initParams)
+        return Promise
+            .resolve(initParams)
             .then(initParams => {
                 swanEvents('masterActiveInitAction', Communicator.getInstance(this.swaninterface));
                 if (!!initParams.preventAppLoad) {
@@ -214,9 +251,11 @@ export default class Slave {
                 const loadCommonJs = this.appConfig.splitAppJs
                 && !this.appConfig.subPackages
                 ? 'common.js' : 'app.js';
-                return loader.loadjs(`${this.appRootPath}/${loadCommonJs}`, 'masterActiveAppJsLoaded').then(() => {
-                    return this.loadJs.call(this, initParams);
-                });
+                return loader
+                    .loadjs(`${this.appRootPath}/${loadCommonJs}`, 'masterActiveAppJsLoaded')
+                    .then(() => {
+                        return this.loadJs.call(this, initParams);
+                    });
             })
             .then(initParams => {
                 this.uri = initParams.pageUrl.split('?')[0];
@@ -239,15 +278,20 @@ export default class Slave {
      */
     loadJs(params) {
         return new Promise(resolve => {
-            const loadJsRoot = !!params.root ? this.appRootPath + '/' + params.root : this.appRootPath;
-            this.appConfig.splitAppJs && !this.appConfig.subPackages
-            ? this.loadFirst(params).then(() => {
+            // 如果有分包，且有子包的话
+            if (this.appConfig.splitAppJs && !this.appConfig.subPackages) {
+                this.loadFirst(params)
+                    .then(() => resolve(params));
+            }
+            // 如果没有分包，有root的时候，加载app.js
+            else if (!!params.root) {
+                loader.loadjs(`${this.appRootPath}/${params.root}/app.js`)
+                    .then(() => resolve(params));
+            }
+            // 如果均没有，则直接返回
+            else {
                 resolve(params);
-            })
-            : !!params.root
-            ? loader.loadjs(`${loadJsRoot}/app.js`).then(() => {
-                resolve(params);
-            }) : resolve(params);
+            }
         });
     }
 
@@ -258,11 +302,29 @@ export default class Slave {
      * @return {Promise} 返回初始化之后的Promise流
      */
     loadFirst(params) {
-        this.loadJsCommunicator.onMessage('slaveAttached', event => {
-            return +event.slaveId === +this.slaveId && this.loadPages(params);
-        }, {once: true});
+        this.loadJsCommunicator
+            .onMessage('slaveAttached', event => {
+                return +event.slaveId === +this.slaveId
+                    && this.loadPages(params);
+            }, {once: true});
         const firstPageUri = params.pageUrl.split('?')[0];
-        return loader.loadjs(`${this.appRootPath}/${firstPageUri}.js`);
+        if (splitAppAccessory.tabBarList.length > 0) {
+            let pageUriList = splitAppAccessory.tabBarList
+                .map(tab => {
+                    let pageUri = tab.pagePath.split('?')[0];
+                    return pageUri;
+                });
+            if (pageUriList.indexOf(firstPageUri) < 0) {
+                pageUriList.push(firstPageUri);
+            }
+            return Promise
+                .all(pageUriList.map(pageUri => {
+                    return loader.loadjs(`${this.appRootPath}/${pageUri}.js`);
+                }));
+        }
+        else {
+            return loader.loadjs(`${this.appRootPath}/${firstPageUri}.js`);
+        }
     }
 
     /**
@@ -271,13 +333,15 @@ export default class Slave {
      * @param {Object} params 加载首屏页面业务代码的参数
      */
     loadPages(params) {
-        Promise.all([
-            loader.loadjs(`${this.appRootPath}/pages.js`)
-        ]).then(() => {
-            this.noticeOpenPage && this.noticeOpenPage();
-            this.noticeRedirectToPage && this.noticeRedirectToPage();
-            this.allJsLoaded = true;
-        });
+        Promise
+            .all([
+                loader.loadjs(`${this.appRootPath}/pages.js`)
+            ])
+            .then(() => {
+                splitAppAccessory.allJsLoaded = true;
+                typeof splitAppAccessory.routeResolve === 'function'
+                    && splitAppAccessory.routeResolve();
+            });
     }
     /**
      * 入栈之后的生命周期方法
@@ -295,15 +359,15 @@ export default class Slave {
      * @return {Object} 打开页面以后返回对象
      */
     open(navigationParams) {
-        if (!!this.isFirstPage && !!this.appConfig.splitAppJs && !this.appConfig.subPackages && !this.allJsLoaded) {
-            new Promise(resolve => {
-                this.noticeOpenPage = resolve;
-            }).then(() => {
-                return this.openPage(navigationParams);
-            });
-        } else {
-            return this.openPage(navigationParams);
-        }
+        return new Promise(resolve => {
+                if (splitAppAccessory.allJsLoaded) {
+                    resolve();
+                }
+                else {
+                    splitAppAccessory.routeResolve = resolve;
+                }
+            })
+            .then(() => this.openPage(navigationParams));
     }
 
     /**
@@ -313,36 +377,51 @@ export default class Slave {
      * @return {Object} 打开页面以后返回对象
      */
     openPage(navigationParams) {
-        this.status = STATUE_MAP.CREATING;
+        this.status = STATUS_MAP.CREATING;
+        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
         return new Promise((resolve, reject) => {
-            this.swaninterface.invoke('navigateTo', {
-                ...navigationParams,
-                ...{
-                    success: res => {
-                        executeWithTryCatch(navigationParams.success, null, 'success api execute error');
-                        resolve(res);
-                    },
-                    fail: res => {
-                        executeWithTryCatch(navigationParams.fail, null, 'fail api execute error');
-                        reject(res);
-                    },
-                    complete: res => {
-                        executeWithTryCatch(navigationParams.complete, null, 'complete api execute error');
+                this.swaninterface.invoke('navigateTo', {
+                    ...navigationParams,
+                    initData: {data, componentsData},
+                    ...{
+                        success: res => {
+                            executeWithTryCatch(
+                                navigationParams.success,
+                                null,
+                                'success api execute error'
+                            );
+                            resolve(res);
+                        },
+                        fail: res => {
+                            executeWithTryCatch(
+                                navigationParams.fail,
+                                null,
+                                'fail api execute error'
+                            );
+                            reject(res);
+                        },
+                        complete: res => {
+                            executeWithTryCatch(
+                                navigationParams.complete,
+                                null,
+                                'complete api execute error'
+                            );
+                        }
                     }
+                });
+            })
+            .then(res => {
+                if (res.root) {
+                    return loader
+                        .loadjs(`${this.appRootPath}/${res.root}/app.js`)
+                        .then(() => res);
                 }
+                return res;
+            })
+            .then(res => {
+                this.slaveId = res.wvID;
+                return res;
             });
-        })
-        .then(res => {
-            if (res.root) {
-                return loader.loadjs(`${this.appRootPath}/${res.root}/app.js`)
-                .then(() => res);
-            }
-            return res;
-        })
-        .then(res => {
-            this.slaveId = res.wvID;
-            return res;
-        });
     }
 
     /**
@@ -352,15 +431,17 @@ export default class Slave {
      * @return {Object} 打开页面以后返回对象
      */
     redirect(navigationParams) {
-        if (!!this.isFirstPage && !!this.appConfig.splitAppJs && !this.appConfig.subPackages &&  !this.allJsLoaded) {
-            new Promise(resolve => {
-                this.noticeRedirectToPage = resolve;
-            }).then(() => {
+        return new Promise(resolve => {
+                if (splitAppAccessory.allJsLoaded) {
+                    resolve();
+                }
+                else {
+                    splitAppAccessory.routeResolve = resolve;
+                }
+            })
+            .then(() => {
                 return this.redirectToPage(navigationParams);
             });
-        } else {
-            return this.redirectToPage(navigationParams);
-        }
     }
 
     /**
@@ -371,39 +452,54 @@ export default class Slave {
      */
     redirectToPage(navigationParams) {
         this.close();
+        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
         return new Promise((resolve, reject) => {
-            this.swaninterface.invoke('redirectTo', {
-                ...navigationParams,
-                ...{
-                    success: res => {
-                        executeWithTryCatch(navigationParams.success, null, 'success api execute error');
-                        resolve(res);
-                    },
-                    fail: res => {
-                        executeWithTryCatch(navigationParams.fail, null, 'fail api execute error');
-                        reject(res);
-                    },
-                    complete: res => {
-                        executeWithTryCatch(navigationParams.complete, null, 'complete api execute error');
+                this.swaninterface.invoke('redirectTo', {
+                    ...navigationParams,
+                    initData: {data, componentsData},
+                    ...{
+                        success: res => {
+                            executeWithTryCatch(
+                                navigationParams.success,
+                                null,
+                                'success api execute error'
+                            );
+                            resolve(res);
+                        },
+                        fail: res => {
+                            executeWithTryCatch(
+                                navigationParams.fail,
+                                null,
+                                'fail api execute error'
+                            );
+                            reject(res);
+                        },
+                        complete: res => {
+                            executeWithTryCatch(
+                                navigationParams.complete,
+                                null,
+                                'complete api execute error'
+                            );
+                        }
                     }
+                });
+            })
+            .then(res => {
+                if (res.root) {
+                    return loader
+                        .loadjs(`${this.appRootPath}/${res.root}/app.js`)
+                        .then(() => res);
                 }
+                return res;
+            })
+            .then(res => {
+                this.uri = navigationParams.url.split('?')[0];
+                this.accessUri = navigationParams.url;
+                this.slaveId = res.wvID;
+                this.status = STATUS_MAP.CREATING;
+                this.createPageInstance();
+                return res;
             });
-        })
-        .then(res => {
-            if (res.root) {
-                return loader.loadjs(`${this.appRootPath}/${res.root}/app.js`)
-                .then(() => res);
-            }
-            return res;
-        })
-        .then(res => {
-            this.uri = navigationParams.url.split('?')[0];
-            this.accessUri = navigationParams.url;
-            this.slaveId = res.wvID;
-            this.status = STATUE_MAP.CREATING;
-            this.createPageInstance();
-            return res;
-        });
     }
     /**
      * 创建页面实例，并且，当slave加载完成之后，向slave传递初始化data
@@ -422,12 +518,14 @@ export default class Slave {
         this.setUserPageInstance(userPageInstance);
 
         try {
+            swanEvents('masterPageOnLoadHookStart');
             userPageInstance._onLoad(getParams(query));
+            swanEvents('masterPageOnLoadHookEnd');
         }
         catch (e) {
             // avoid empty state
         }
-        this.status = STATUE_MAP.CREATED;
+        this.status = STATUS_MAP.CREATED;
         return this.swaninterface.invoke('loadJs', {
             uri: this.uri,
             eventObj: {
@@ -445,9 +543,9 @@ export default class Slave {
 
     switchTab(params) {
         return this.swaninterface.swan.reLaunch({
-            ...params,
-            url: '/' + params.url
-        });
+                ...params,
+                url: '/' + params.url
+            });
     }
 
     /**
@@ -462,7 +560,7 @@ export default class Slave {
         catch (e) {
             // avoid empty state
         }
-        this.status = STATUE_MAP.CLOSED;
+        this.status = STATUS_MAP.CLOSED;
         return this;
     }
 }

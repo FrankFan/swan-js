@@ -31,7 +31,7 @@ export const pathResolver = (originPath, path, errorCb) => {
  */
 export const absolutePathResolver = (basePath, pagePath, path) => {
     // 远程地址无需转换
-    if (/^(http:\/\/)|(https:\/\/)/g.test(path)) {
+    if (/^https?:\/\//.test(path)) {
         return path;
     }
     // 绝对路径的话，不用page路径

@@ -5,8 +5,8 @@
 import swanEvents from '../../utils/swan-events';
 
 export default class History {
-    constructor(initSlaves) {
-        this.historyStack = [...initSlaves];
+    constructor(initSlaves = []) {
+        this.historyStack = initSlaves;
         swanEvents('masterPreloadCreateHistorystack')
     }
     /**

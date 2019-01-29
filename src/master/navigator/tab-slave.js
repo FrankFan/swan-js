@@ -4,7 +4,7 @@
  * @author houyu(houyu01@baidu.com)
  */
 import Slave from './slave';
-import {STATUE_MAP} from './slave-common-parts';
+import {STATUS_MAP} from './slave-common-parts';
 export default class TabSlave {
     /**
      * TabSlave 构造函数
@@ -125,29 +125,34 @@ export default class TabSlave {
         this.setCurrentIndex(webviewIndex);
 
         // 触发被切换到的slave的onEnqueue
-        toChild.setSlaveId(toId).onEnqueue()
+        return toChild.setSlaveId(toId).onEnqueue()
             .then(() => {
                 const text = this.list[webviewIndex].text || '';
                 toChild.onswitchTab({
                     webviewIndex,
                     text
                 });
+                return {
+                    wvID: toId,
+                    tabIndexPage: toTabIndex + toPage,
+                    type: 'onTabItemTap'
+                };
             });
     }
     redirect(paramsObj) {
         return this.getCurrentChildren().redirect(paramsObj);
     }
     open(paramsObj) {
-        this.status = STATUE_MAP.CREATING;
+        this.status = STATUS_MAP.CREATING;
         return this.getCurrentChildren().open(paramsObj)
             .then(res => {
-                this.status = STATUE_MAP.CREATED;
+                this.status = STATUS_MAP.CREATED;
                 return res;
             });
     }
     close() {
         this.children.forEach(child => child.close());
-        this.status = STATUE_MAP.CLOSED;
+        this.status = STATUS_MAP.CLOSED;
     }
     
     onEnqueue(params) {

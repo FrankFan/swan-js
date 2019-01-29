@@ -5,12 +5,13 @@
 import Slave from './slave';
 import History from './history';
 import TabSlave from './tab-slave';
-import {pathResolver} from '../../utils';
+import {pathResolver, parseUrl} from '../../utils';
 import swanEvents from '../../utils/swan-events';
+import splitAppAccessory from '../../utils/splitapp-accessory';
 
 export class Navigator {
     constructor(swaninterface, context) {
-        this.history = new History([]);
+        this.history = new History();
         this.swaninterface = swaninterface;
         this.context = context;
     }
@@ -18,6 +19,7 @@ export class Navigator {
         // 第一次从客户端获取到appConfig
         this.appConfig = appConfig;
     }
+
     /**
      * 初始化第一个slave
      * @param {Object} [initParams] - 初始化的参数
@@ -27,45 +29,37 @@ export class Navigator {
         this.listenRoute();
 
         swanEvents('masterActiveCreateInitslave');
+
+        // 根据appConfig判断时候有appjs拆分逻辑
+        // 如果包含splitAppJs字段，且不分包，则为拆分app.js
+        if (this.appConfig.splitAppJs && !this.appConfig.subPackages) {
+            splitAppAccessory.allJsLoaded = false;
+        }
+
         // 创建初始化slave
         this.initSlave = this.createInitSlave(initParams.pageUrl, this.appConfig);
 
         // slave的init调用
-        this.initSlave.init(initParams)
-        .then(initRes => {
-            swanEvents('masterActiveCreateInitslaveEnd');
-            // 入栈
-            this.history.pushHistory(this.initSlave);
-            swanEvents('masterActivePushInitslaveEnd');
-            // 调用slave的onEnqueue生命周期函数
-            this.initSlave.onEnqueue();
-            swanEvents('masterActiveOnqueueInitslave');
+        this.initSlave
+            .init(initParams)
+            .then(initRes => {
+                swanEvents('masterActiveCreateInitslaveEnd');
+                // 入栈
+                this.history.pushHistory(this.initSlave);
+                swanEvents('masterActivePushInitslaveEnd');
+                // 调用slave的onEnqueue生命周期函数
+                this.initSlave.onEnqueue();
+                swanEvents('masterActiveOnqueueInitslave');
 
-        })
+            });
     }
 
-    parseUrl(url) {
-        let matchs = url.match(/(.*)\?(.*)/);
-        let result = {
-            pathname: matchs ? matchs[1] : url,
-            query: {}
-        }
-        if (matchs) {
-            var re = /([^&=]+)=([^&]*)/g,
-                m;
-            while (m = re.exec(matchs[2])) {
-                result.query[decodeURIComponent(m[1])] = decodeURIComponent(m[2]);
-            }
-        }
-        return result;
-    }
-    
     /**
      * 调用用户自定义onPageNotFound方法
      *
      * @param {string} [parsed] - 跳转url
      */
-    handdleNavigatorError(parsed) {
+    handleNavigatorError(parsed) {
         let app = this.context.getApp();
         app && app._onPageNotFound({
             appInfo: this.context.appInfo || {},
@@ -85,15 +79,25 @@ export class Navigator {
      * @return {boolean} 是否存在
      */
     preCheckPageExist(url) {
-        let parsed = this.parseUrl(url);
+        let parsed = parseUrl(url);
         url = parsed.pathname;
         // 如果pages中存在该页面，则通过
         if (this.appConfig.pages.includes(url)) {
             return true;
         }
+
+        // 有使用Component构造器构造的页面，则通过
+        if (masterManager
+            && masterManager.pagesQueue
+            && Object.keys(masterManager.pagesQueue).includes(url)
+        ) {
+            return true;
+        }
+
         // 获取分包中的path
         let subPackagesPages = [];
-        this.appConfig.subPackages.forEach(subPackage => {
+        this.appConfig.subPackages
+        && this.appConfig.subPackages.forEach(subPackage => {
             // 此处兼容两种配置
             let pages = subPackage.pages.map(page =>
                 (subPackage.root + '/' + page).replace('//', '/')
@@ -107,7 +111,7 @@ export class Navigator {
         }
 
         // 不通过，走路由失败的逻辑
-        this.handdleNavigatorError(parsed);
+        this.handleNavigatorError(parsed);
         return false;
     }
 
@@ -115,9 +119,10 @@ export class Navigator {
      * 跳转到下一页的方法
      *
      * @param {Object} [params] - 跳转参数
+     * @return {Promise}
      */
     navigateTo(params) {
-        params.url = this.pathResolver(params.url);
+        params.url = this.resolvePathByTopSlave(params.url);
         this.preCheckPageExist(params.url);
         const {url, slaveId} = params;
         const {appConfig, swaninterface} = this;
@@ -129,26 +134,27 @@ export class Navigator {
         });
         // TODO: openinit openNext 判断有问题
         return newSlave.open(params)
-        .then(res => {
-            const slaveId = res.wvID;
-            // navigateTo的第一步，将slave完全实例化
-            newSlave.setSlaveId(slaveId);
-            // navigateTo的第二步，讲slave推入栈
-            this.history.pushHistory(newSlave);
-            // navigateTo的第三步，调用slave的onEnqueue生命周期函数
-            newSlave.onEnqueue();
-            return res;
-        })
-        .catch(console.log);
+            .then(res => {
+                const slaveId = res.wvID;
+                // navigateTo的第一步，将slave完全实例化
+                newSlave.setSlaveId(slaveId);
+                // navigateTo的第二步，讲slave推入栈
+                this.history.pushHistory(newSlave);
+                // navigateTo的第三步，调用slave的onEnqueue生命周期函数
+                newSlave.onEnqueue();
+                return res;
+            })
+            .catch(console.log);
     }
 
     /**
      * 重定向方法，在当前页面刷新打开，而不是新创建一个slave
      *
-     * @param {Object}
+     * @param {Object} params 重定向所需要的参数
+     * @return {Promise}
      */
     redirectTo(params) {
-        params.url = this.pathResolver(params.url);
+        params.url = this.resolvePathByTopSlave(params.url);
         this.preCheckPageExist(params.url);
         return this.history.historyStack.filter(slave =>
         !slave.isClosing)[this.history.historyStack.length - 1].redirect(params)
@@ -158,38 +164,41 @@ export class Navigator {
         const topSlave = this.history.getTopSlaves()[0];
         // 将即将退栈的 slave 状态改为退栈中
         topSlave.isClosing = true;
-        return this.swaninterface.invoke('navigateBack', params)
-        // 完成退栈
-        .then(() => topSlave.isClosing = false)
-        .catch(() => topSlave.isClosing = false);
+        return this.swaninterface
+            .invoke('navigateBack', params)
+            // 完成退栈
+            .then(() => topSlave.isClosing = false)
+            .catch(() => topSlave.isClosing = false);
     }
     switchTab(params) {
-        params.url = this.pathResolver(params.url);
-        return this.initSlave.switchTab(params)
-        .then(res => {
-            this.history.popTo(this.initSlave.getSlaveId());
-            return res;
-        });
+        params.url = this.resolvePathByTopSlave(params.url);
+        return this.initSlave
+            .switchTab(params)
+            .then(res => {
+                this.history.popTo(this.initSlave.getSlaveId());
+                return res;
+            });
     }
     reLaunch(params = {}) {
         if (!params.url) {
             const topSlave = this.history.getTopSlaves()[0];
             params.url = topSlave.getFrontUri();
         }
-        params.url = this.pathResolver(params.url);
+        params.url = this.resolvePathByTopSlave(params.url);
         const targetSlave = this.getSlaveEnsure(params.url, true);
-        return targetSlave.reLaunch(params)
-        .then(res => {
-            const slaveId = res.wvID;
-            this.initSlave = targetSlave;
-            // reluanch的第一步，先把栈清空
-            this.history.clear();
-            // 然后重新入栈当前重新生成的slave
-            this.history.pushHistory(targetSlave);
-            // 调用重新入栈的生命周期方法
-            targetSlave.onEnqueue();
-            return res;
-        });
+        return targetSlave
+            .reLaunch(params)
+            .then(res => {
+                const slaveId = res.wvID;
+                this.initSlave = targetSlave;
+                // reluanch的第一步，先把栈清空
+                this.history.clear();
+                // 然后重新入栈当前重新生成的slave
+                this.history.pushHistory(targetSlave);
+                // 调用重新入栈的生命周期方法
+                targetSlave.onEnqueue();
+                return res;
+            });
     }
 
     listenRoute() {
@@ -212,9 +221,24 @@ export class Navigator {
         this.history.popTo(toId);
     }
     onswitchTab(fromId, toId, toPage, toTabIndex) {
-        this.initSlave.onswitchTab({fromId, toId, toPage, toTabIndex});
+        this.initSlave
+            .onswitchTab({fromId, toId, toPage, toTabIndex})
+            .then(e=>{
+                this.context.masterManager.pageLifeCycleEventEmitter
+                    .fireMessage({
+                        type: 'onTabItemTap',
+                        event: e,
+                        from: 'switchTab'
+                    });
+            });
     }
-    pathResolver(path) {
+
+    /**
+     * 将传入的path以页面栈顶层为相对路径
+     * @param {string} path - 需要解析的相对路径
+     * @return {string} 解析后的全路径
+     */
+    resolvePathByTopSlave(path) {
         if (/^\//g.exec(path)) {
             return path.replace(/^\//g, '');
         }
@@ -224,7 +248,7 @@ export class Navigator {
         });
         return uriStack.join('/').replace(/^\//g, '');
     }
-    
+
     /**
      * 从history栈中获取slave，如果获取不到，则产生新的slave
      *
@@ -239,6 +263,7 @@ export class Navigator {
         }
         return targetSlave;
     }
+
     /**
      * 产生初始化的slave的工厂方法
      *
@@ -256,6 +281,7 @@ export class Navigator {
         const currentIndex = tabBarList.findIndex(tab => tab.pagePath === initPath);
         const swaninterface = this.swaninterface;
         if (tabBarList.length > 1 && currentIndex > -1) {
+            splitAppAccessory.tabBarList = tabBarList;
             return new TabSlave({
                 list: tabBarList,
                 currentIndex,

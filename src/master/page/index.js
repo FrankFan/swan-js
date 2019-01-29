@@ -6,10 +6,9 @@ import swanEvents from '../../utils/swan-events';
 import EventsEmitter from '../../utils/events-emitter';
 import SlaveEventsRouter from './slave-events-router';
 import {getPagePrototypeInstance} from './page-prototype';
-import {Data, getParams, Share, deepClone} from '../../utils';
-/* globals swanGlobal*/
+import {Data, getParams, Share, deepClone, getAppInfo} from '../../utils';
 const pageLifeCycleEventEmitter = new EventsEmitter();
-let global = swanGlobal ? swanGlobal : window;
+let global = window;
 
 /**
  * slave的绑定事件初始化
@@ -41,9 +40,7 @@ export const slaveEventInit = master => {
  */
 const initUserPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan, appConfig) => {
     const swaninterface = masterManager.swaninterface;
-    const appid = typeof global.__swanAppInfo === 'object'
-        ? global.__swanAppInfo.appid
-        : swaninterface.boxjs.data.get({name: 'swan-appInfoSync'}).appid;
+    const appid = getAppInfo(swaninterface).appid;
     slaveId = '' + slaveId;
 
     // 获取page的原型方法单例，防止对每个page都生成方法集合
@@ -98,6 +95,33 @@ const cloneSwanPageObject = (pagePrototype = {}) => {
         }
     });
     return newSwanObject;
+};
+
+// 优化redirectTo和naviagteTo时的性能
+// 提前在调用路由端能力之前把initData准备好
+// 减少一次单独发送initData的端能力调用
+export const getInitDataAdvanced = accessUri => {
+    swanEvents('master_active_get_salve_data_advanced');
+    const uriPath = accessUri.split('?')[0];
+    // 如果是在子包中的页面，直接返回，这种情况不做处理
+    if (!global.masterManager.pagesQueue[uriPath]) {
+        return {
+            data: {},
+            componentsData: {}
+        };
+    }
+    // 因为获取页面原型的方法是单例，因此这里提前调用没有副作用
+    const pagePrototype = getPagePrototypeInstance(global.masterManager, global.swan, pageLifeCycleEventEmitter);
+    // 现获取页面本身的data
+    let data = global.masterManager.pagesQueue[uriPath].data || {};
+    // 再获取自定义组件里面的data
+    let componentsData = pagePrototype
+        .privateMethod
+        .getCustomComponentsData(global.masterManager.pagesQueue[uriPath].usingComponents);
+    return {
+        data,
+        componentsData
+    };
 };
 
 // 当页面打开时(即slave加载完毕，通知master时)master可以将页面对应的page对象进行实例化

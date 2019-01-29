@@ -22,6 +22,7 @@ export default class Loader {
             if (swanGlobal) {
                 try {
                     _naSwan.include(loadPath);
+                    action && swanEvents(action);
                 } catch (e) {
                     reject(e);
                     console.error(e);

@@ -41,7 +41,8 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             const setObject = typeof path === 'object' ? path : {
                 [path]: value
             };
-            const callback = typeof value === 'function' ? value : cb;
+            cb = typeof cb === 'function' ? cb : noop;
+            const callback = typeof value === 'function' ? value : cb;  
             const pageUpdateStart = Date.now() + '';
 
             // 暂时只优化自定义组件的数据设置，进行throttle

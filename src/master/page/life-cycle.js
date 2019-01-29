@@ -4,6 +4,57 @@
  */
 import swanEvents from '../../utils/swan-events';
 
+const customComponentPageLifetimes = ['onShow', 'onHide'];
+
+/**
+ * 触发页面中自定义组件的pageLifetimes (show|hide)
+ *
+ * @param {Object} customComponent - 当前自定义组件实例
+ * @param {string} type            - 事件类型
+ * @param {Object} params          - 页面onLoad的参数
+ */
+const pageLifetimesExecutor = (customComponent, type, params) => {
+    if (customComponentPageLifetimes.includes(type)) {
+        const eventType = type.replace(/^(on)/, '').toLowerCase();
+        customComponent.pageLifetimes
+        && customComponent.pageLifetimes[eventType]
+        && customComponent.pageLifetimes[eventType].call(customComponent, params);
+    }
+};
+
+/**
+ * 自定义组件page化, 生命周期触发
+ *
+ * @param {Object} pageInstance - 页面实例
+ * @param {string} type         - 事件类型
+ * @param {Object} params       - 页面onLoad的参数
+ */
+const customComponentLifeCycleExecutor = (pageInstance, type, params) => {
+    const customComponents = pageInstance.privateProperties.customComponents;
+    if (customComponents) {
+        for (let customComponentId in customComponents) {
+            const customComponent = customComponents[customComponentId];
+            // 触发onLoad时自定义组件还没有创建好, 将触发onLoad时机放到onReady前
+            // 保持与page级生命周期（目前page未修复前onLoad -> onReady -> onShow）同时序
+            if (pageInstance._isCustomComponentPage
+                && pageInstance.route === customComponent.is
+                && type === 'onReady'
+            ) {
+                customComponent.onLoad
+                && customComponent.onLoad.call(customComponent, pageInstance._onLoadParams);
+            }
+
+            pageLifetimesExecutor(customComponent, type, params);
+
+            // 自定义组件当做页面使用时, 其生命周期的处理, 只有page化的该自定义组件享有页面级生命周期（methods内）
+            pageInstance._isCustomComponentPage
+            && pageInstance.route === customComponent.is
+            && customComponent[type]
+            && customComponent[type].call(customComponent, params);
+        }
+    }
+};
+
 /* eslint-disable fecs-camelcase */
 const lifeCyclePrototype = {
 
@@ -15,6 +66,7 @@ const lifeCyclePrototype = {
     _onLoad(params) {
         try {
             this.onLoad && this.onLoad(params);
+            this._onLoadParams = params; // 给自定义组件page化使用
         }
         catch (e) {
             console.error(e);
@@ -31,6 +83,7 @@ const lifeCyclePrototype = {
     _onReady(params) {
         try {
             this.onReady && this.onReady(params);
+            customComponentLifeCycleExecutor(this, 'onReady', params);
         }
         catch (e) {
             console.error(e);
@@ -45,7 +98,9 @@ const lifeCyclePrototype = {
      */
     _onShow(params) {
         try {
+            this._sendPageLifeCycleMessage('onPreShow', params);
             this.onShow && this.onShow(params);
+            customComponentLifeCycleExecutor(this, 'onShow', params);
         }
         catch (e) {
             console.error(e);
@@ -64,6 +119,7 @@ const lifeCyclePrototype = {
      */
     _onHide(params) {
         this.onHide && this.onHide(params);
+        customComponentLifeCycleExecutor(this, 'onHide', params);
         this._sendPageLifeCycleMessage('onHide', params);
     },
 
@@ -75,7 +131,18 @@ const lifeCyclePrototype = {
     _onUnload(params) {
         this.onUnload && this.onUnload(params);
         this._onHide();
+        customComponentLifeCycleExecutor(this, 'onUnload', params);
         this._sendPageLifeCycleMessage('onUnload', params);
+    },
+
+     /**
+     * onForceReLaunch生命周期，小程序面板点重启时(强制relauch)
+     *
+     * @param {Object} params - onForceReLaunch的生命周期参数
+     */
+    _onForceReLaunch(params) {
+        this.onForceReLaunch && this.onForceReLaunch(params);
+        this._sendPageLifeCycleMessage('onForceReLaunch', params);
     },
 
     /**
@@ -85,12 +152,14 @@ const lifeCyclePrototype = {
      */
     _pullDownRefresh(params) {
         this.onPullDownRefresh && this.onPullDownRefresh(params);
+        customComponentLifeCycleExecutor(this, 'onPullDownRefresh', params);
         this._sendPageLifeCycleMessage('onPullDownRefresh', params);
     },
 
     _onTabItemTap(params) {
         const proccessedParams = [].concat(params)[0];
         this.onTabItemTap && this.onTabItemTap(proccessedParams);
+        customComponentLifeCycleExecutor(this, 'onTabItemTap', params);
         this._sendPageLifeCycleMessage('onTabItemTap', params);
     },
 
@@ -105,11 +174,13 @@ const lifeCyclePrototype = {
 
     _reachBottom(params) {
         this.onReachBottom && this.onReachBottom(params);
+        customComponentLifeCycleExecutor(this, 'onReachBottom', params);
         this._sendPageLifeCycleMessage('onReachBottom', params);
     },
 
     _onPageScroll(params) {
         this.onPageScroll && this.onPageScroll(params);
+        customComponentLifeCycleExecutor(this, 'onPageScroll', params);
         this._sendPageLifeCycleMessage('onPageScroll', params);
     },
 

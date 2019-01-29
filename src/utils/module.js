@@ -5,8 +5,7 @@
 import {pathResolver} from './path';
 const MODULE_PRE_DEFINED = 1;
 const MODULE_DEFINED = 2;
-const global = swanGlobal ? swanGlobal : window;
-/* globals swanGlobal */
+const global = window;
 let modModules = {};
 
 const parseId = baseId => {
@@ -21,6 +20,21 @@ const createLocalRequire = (baseId, require) => id => {
     });
     const absId = paths.join('/').replace(/\.js$/g, '');
     return require(absId);
+};
+
+// 重写开发者使用的Function, 过滤new Function同时保留原型
+const safetyFn = () => {
+    const fn = (...args) => {
+        const len = args.length;
+        if (len > 0 && 'return this' === args[len - 1]) {
+            return function () {
+                return {};
+            };
+        }
+    };
+    fn.prototype = Function.prototype;
+    Function.prototype.constructor = fn;
+    return fn;
 };
 
 export const require = id => {

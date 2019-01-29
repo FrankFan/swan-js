@@ -16,7 +16,7 @@ const NEW_EXTRA_PARAM_REGEX = /(_baiduboxapp|callback|upgrade).*?(&|$)/g;
 // const basePath = window.basePath;
 export const loader = new Loader();
 export {Share} from './share';
-export {executeWithTryCatch} from './code-proccess';
+export {executeWithTryCatch} from './code-process';
 export {Data};
 export * from './path';
 
@@ -364,4 +364,52 @@ export const mixin = (...targetObjects) => targetObjects.reduce(deepAssign, {});
  */
 export const deepClone = originObj => {
     return deepAssign(Object.prototype.toString.call(originObj) === '[object Array]' ? [] : {}, originObj);
+};
+
+export const parseUrl = url => {
+    let matchs = url.match(/(.*?)\?(.*)/);
+    let result = {
+        pathname: matchs ? matchs[1] : url,
+        query: {}
+    };
+    if (matchs) {
+        let re = /([^&=]+)=([^&]*)/g;
+        let m;
+        while ((m = re.exec(matchs[2])) !== null) {
+            result.query[decodeURIComponent(m[1])] = decodeURIComponent(m[2]);
+        }
+    }
+    return result;
+};
+
+let appInfoCache = null;
+
+/**
+ * 获取App信息(包含：appId,scene,scheme)
+ *
+ * @param {Object} swaninterface - 端能力接口
+ * @param {bool} [noCache=false] - 是否使用缓存的appInfo
+ * @return {Object} - 获取得到的App信息
+ */
+export const getAppInfo = (swaninterface, noCache = false) => {
+    if (noCache || !appInfoCache) {
+        appInfoCache = swaninterface.boxjs.data.get({name: 'swan-appInfoSync'});
+    }
+    return appInfoCache;
+};
+
+/**
+ * 安全调用对象上的某一方法
+ *
+ * @param {Object} obj - 被调用对象
+ * @param {string} methodName - 对象上被调用的方法名
+ * @param {...*} args - 传入方法的参数
+ */
+export const callMethodSafty = (obj, methodName, ...args) => {
+    try {
+        obj[methodName] && obj[methodName](...args);
+    }
+    catch (e) {
+        console.error(e);
+    }
 };

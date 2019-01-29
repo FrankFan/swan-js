@@ -4,6 +4,8 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
+import Slave from '../navigator/slave';
+import TabSlave from '../navigator/tab-slave';
 
 /**
  * slave的事件封装分发器，封装了大量的无逻辑公有方法
@@ -79,15 +81,24 @@ export default class SlaveEventsRouter {
 
     /**
      * 保证onShow执行在onReady之前
+     *
+     * @param {string} currentSlaveId 需要触发的页面的slaveId
      */
-    pageRendered(currentSlaveId) {
+    emitPageRender(currentSlaveId) {
         this.slaveCommunicator.onMessage('abilityMessage', events => {
             if (Object.prototype.toString.call(events) !== '[object Array]') {
                 events = [events];
             }
             events.forEach(event => {
-                if (event.value.type === 'rendered' && event.slaveId === currentSlaveId) {
-                    this.callEventOccurredPageMethod(event.slaveId, event.value.type, {}, event.value.params);
+                if (event.value.type === 'rendered'
+                    && event.slaveId === currentSlaveId
+                ) {
+                    this.callEventOccurredPageMethod(
+                        event.slaveId,
+                        event.value.type,
+                        {},
+                        event.value.params
+                    );
                 }
             });
         }, {listenPreviousEvent: true});
@@ -118,29 +129,6 @@ export default class SlaveEventsRouter {
     }
 
     /**
-     * 通知页面装载的自定义组件生命周期, 目前仅有show和hide
-     *
-     * @param {string} slaveId - 实例页面的slaveId
-     * @param {string} methodName - [show | hide]
-     * @param  {...*} args - 透传参数
-     */
-    callPageCustomComponentMethod(slaveId, methodName, ...args) {
-        const occurredSlave = this.history.seek(slaveId);
-        if (occurredSlave) {
-            const customComponents = occurredSlave.userPageInstance.privateProperties.customComponents;
-            if (customComponents) {
-                Object.keys(customComponents).forEach(customComponentId => {
-                    const customComponent = customComponents[customComponentId];
-                    customComponent.pageLifetimes
-                    && customComponent.pageLifetimes[methodName]
-                    && customComponent.pageLifetimes[methodName].call(customComponent, ...args);
-                });
-            }
-        }
-        return null;
-    }
-
-    /**
      * 绑定开发者绑定的events
      */
     bindDeveloperEvents() {
@@ -148,7 +136,8 @@ export default class SlaveEventsRouter {
             const eventOccurredPageObject = this.history.seek(event.slaveId).getUserPageInstance();
             if (event.customEventParams) {
                 const nodeId = event.customEventParams.nodeId;
-                const reflectComponent = eventOccurredPageObject.privateProperties.customComponents[nodeId];
+                const reflectComponent = eventOccurredPageObject
+                    .privateProperties.customComponents[nodeId];
                 if (reflectComponent[event.value.reflectMethod]) {
                     reflectComponent[event.value.reflectMethod]
                         .call(reflectComponent, event.value.e);
@@ -168,24 +157,40 @@ export default class SlaveEventsRouter {
      */
     bindEnvironmentEvents() {
         this.masterManager.swaninterface
-        .bind('sharebtn', event => {
-            this.callEventOccurredPageMethod(event.wvID, 'share', {}, event, 'menu');
-        })
-        .bind('accountChange', event => {
-            this.dispatchAllSlaveEvent('accountChange');
-        })
-        .bind('backtohome', ({url, from}) => {
-            if (from !== 'menu' && url ===  this.history.getTopSlaves()[0].accessUri) {
-                return;
-            }
-            this.masterManager.navigator.reLaunch({url: `/${url}`});
-        });
+            .bind('sharebtn', event => {
+                this.callEventOccurredPageMethod(event.wvID, 'share', {}, event, 'menu');
+            })
+            .bind('accountChange', event => {
+                this.dispatchAllSlaveEvent('accountChange');
+            })
+            .bind('backtohome', ({url, from}) => {
+                let topSlave = this.history.getTopSlaves()[0];
+                let currentSlaveUrl = '';
+                if (topSlave instanceof Slave) {
+                    currentSlaveUrl = topSlave.accessUri;
+                }
+                else if (topSlave instanceof TabSlave) {
+                    currentSlaveUrl = topSlave.children[topSlave.currentIndex].accessUri;
+                }
+                if (from !== 'menu' && currentSlaveUrl ===  url) {
+                    from === 'relaunch' && swanEvents('masterFePageShow');
+                    return;
+                }
+
+                if (from === 'relaunch') {
+                    swanEvents('masterOnNewScheme');
+                }
+                this.masterManager.navigator.reLaunch({url: `/${url}`});
+            });
     }
 
     bindLifeCycleEvent(pageLifeCycleEventEmitter) {
 
         const pageEventsToLifeCycle = ['onHide', 'onTabItemTap'];
-
+        // 需要稍后补执行的操作集合
+        let backPageEventToLifeCycles = {
+            onTabItemTap: Object.create(null)
+        };
         // 确保onShow在onLoad之后
         pageLifeCycleEventEmitter.onMessage('PagelifeCycle', events => {
             if (Object.prototype.toString.call(events) !== '[object Array]') {
@@ -194,39 +199,59 @@ export default class SlaveEventsRouter {
             // 对于客户端事件做一次中转，因为前端有特殊逻辑处理(onShow必须在onLoad之后)
             const detectOnShow = event => {
                 if (event.params.eventName === 'onLoad') {
-                    let rendered = false;
+                    this.masterManager.lifeCycleEventEmitter
+                        .onMessage('onShow' + event.params.slaveId, paramsQueue => {
 
-                    // 兼容客户端在清除历史后首次进入小程序不派发onShow的问题
-                    const renderTimeout = setTimeout(()=>{
-                        if (!rendered) {
-                            this.pageRendered(event.params.slaveId);
-                            rendered = true;
-                        }
-                    }, 1000);
+                            // 筛选出本次的onShow的对应参数
+                            paramsQueue = [].concat(paramsQueue);
 
-                    this.masterManager.lifeCycleEventEmitter.onMessage('onShow' + event.params.slaveId, paramsQueue => {
-                        // 筛选出本次的onShow的对应参数
-                        const e = [].concat(paramsQueue).filter(params => +params.event.wvID === +event.params.slaveId)
-                            .slice(-1).map(params => params.event)[0];
-                        this.callPageMethod(event.params.slaveId, '_onShow', {}, e);
-                        !rendered && this.pageRendered(event.params.slaveId);
-                        rendered = true;
-                        clearTimeout(renderTimeout);
-                        this.callPageCustomComponentMethod(event.params.slaveId, 'show', {}, e);
-                    }, {listenPreviousEvent: true});
+                            // onshow对应的slave
+                            const showedSlave = paramsQueue.filter(params => {
+                                return +params.event.wvID === +event.params.slaveId;
+                            }).slice(-1);
+
+                            // 获取对象中的event
+                            const e = showedSlave[0].event;
+
+                            // 执行对应slave的onShow
+                            this.callPageMethod(event.params.slaveId, '_onShow', {}, e);
+
+                            // 触发页面的onRender逻辑
+                            this.emitPageRender(event.params.slaveId);
+
+                        }, {listenPreviousEvent: true});
                 }
             };
             events.forEach(detectOnShow);
         }, {listenPreviousEvent: true});
 
-        pageLifeCycleEventEmitter.onMessage('onTabItemTap', ({event}) => {
-            this.callPageMethod(event.wvID, '_onTabItemTap', event);
+        pageLifeCycleEventEmitter.onMessage('onTabItemTap', ({event, from}) => {
+            let wvID = event.wvID;
+            // 客户端触发onTabItemTap先于switchtab
+            // 进入新页面pageInstance在onTabItemTap时没有还ready，等待switchtab后内部触发处理
+            if (from === 'switchTab') {
+                let {type, tabIndexPage} = event;
+                let targetEvent = backPageEventToLifeCycles[type];
+                if (targetEvent && targetEvent[tabIndexPage]) {
+                    this.callPageMethod(wvID, '_' + type, targetEvent[tabIndexPage]);
+                    backPageEventToLifeCycles[type] = Object.create(null);
+                }
+                return;
+            }
+            const targetSlave = this.history.seek(wvID);
+            if (targetSlave) {
+                // 原逻辑
+                this.callPageMethod(wvID, '_onTabItemTap', event);
+            }
+            else {
+                // 保存后续调用。 android对于新页面没有传wvID，所以根据index+pagePath进行统一保证
+                backPageEventToLifeCycles.onTabItemTap[event.index + event.pagePath] = event;
+            }
         }, {listenPreviousEvent: true});
 
         this.masterManager.lifeCycleEventEmitter.onMessage('onHide', e => {
             let event = e.event;
             this.callPageMethod(event.wvID, '_onHide', {}, event);
-            this.callPageCustomComponentMethod(event.wvID, 'hide', {}, event);
         }, {listenPreviousEvent: true});
 
         this.masterManager.swaninterface
@@ -234,6 +259,31 @@ export default class SlaveEventsRouter {
                 pageLifeCycleEventEmitter.fireMessage({
                     type: 'onTabItemTap',
                     event
+                });
+            });
+
+        this.masterManager.swaninterface
+            .bind('onForceReLaunch', event => {
+                let {slaveId, homePath, pagePath} = event;
+                let finalReLaunchPath = homePath;
+                let currentSlave = this.history.seek(slaveId);
+                if (currentSlave) {
+                    const currentSlavePageObject = currentSlave.userPageInstance;
+                    if (typeof currentSlavePageObject['onForceReLaunch'] === 'function') {
+                        try {
+                            finalReLaunchPath = currentSlavePageObject['onForceReLaunch']({homePath, pagePath});
+                            finalReLaunchPath = finalReLaunchPath.replace(/^\//g, '');
+                            this.masterManager.navigator.redirectTo({url: `/${finalReLaunchPath}`});
+                            return;
+                        }
+                        catch (e) {
+                            finalReLaunchPath = homePath;
+                        }
+                    }
+                }
+                this.masterManager.navigator.reLaunch({
+                    url: `/${finalReLaunchPath}`,
+                    force: true
                 });
             });
     }

@@ -93,6 +93,7 @@ const lifeCyclePrototype = {
     _onAppShow(params) {
         try {
             processParam(params.appInfo);
+            this._sendAppLifeCycleMessage('onPreShow', {e: params.appInfo});
             this.onShow && this.onShow(this._onAppShowLifeCycleParamsHandle(params));
         }
         catch (e) {
@@ -147,6 +148,7 @@ const lifeCyclePrototype = {
             e: params.appInfo
         });
     },
+
     /**
      * app中如果发生login的变化，则触发此函数，并携带用户信息
      *
