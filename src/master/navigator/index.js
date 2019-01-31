@@ -204,13 +204,13 @@ export class Navigator {
     listenRoute() {
         // 原生层传递过来的消息
         return this.swaninterface
-        .invoke('onRoute', ({routeType, fromId, toId, toPage, toTabIndex}) => {
-            swanEvents('pageSwitchStart', {
-                slaveId: toId,
-                timestamp: Date.now() + ''
+            .invoke('onRoute', ({routeType, fromId, toId, toPage, toTabIndex}) => {
+                swanEvents('pageSwitchStart', {
+                    slaveId: toId,
+                    timestamp: Date.now() + ''
+                });
+                this[`on${routeType}`].call(this, fromId, toId, toPage, toTabIndex);
             });
-            this[`on${routeType}`].call(this, fromId, toId, toPage, toTabIndex);
-        });
     }
     oninit(fromId, toId) {}
     onnavigateTo(fromId, toId) {}
