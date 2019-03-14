@@ -5,7 +5,9 @@
  */
 import Slave from './slave';
 import {STATUS_MAP} from './slave-common-parts';
+
 export default class TabSlave {
+
     /**
      * TabSlave 构造函数
      *
@@ -26,6 +28,7 @@ export default class TabSlave {
         this.swaninterface = swaninterface;
         this.children = this.constructMySlave();
     }
+
     constructMySlave() {
         return this.list.map(item => {
             const {appConfig, swaninterface} = this;
@@ -36,6 +39,7 @@ export default class TabSlave {
             });
         });
     }
+
     /**
      * 根据uri来判断是否当前slave是某一slave
      *
@@ -45,18 +49,23 @@ export default class TabSlave {
     isTheSlave(uri) {
         return !!this.findChild(uri);
     }
+
     getSlaveId() {
         return this.getCurrentChildren().getSlaveId();
     }
+
     seekSlaveQueue(uri) {
         return this.list.filter(item => item.uri === uri);
     }
+
     findChild(uri) {
         return this.children.filter(child => child.isTheSlave(uri))[0];
     }
+
     findChildIndex(uri) {
         return this.children.findIndex(child => child.isTheSlave(uri));
     }
+
     getIndexBySlaveId(slaveId) {
         for (let i = 0, len = this.children.length; i < len; i++) {
             let item = this.children[i];
@@ -65,18 +74,23 @@ export default class TabSlave {
             }
         }
     }
+
     getCurrentChildren() {
         return this.children[this.currentIndex];
     }
+
     init(initParams) {
         return this.getCurrentChildren().init(initParams);
     }
+
     getUri() {
         return this.getCurrentChildren().getUri();
     }
+
     getFrontUri() {
         return this.getCurrentChildren().getFrontUri();
     }
+
     /**
      * 真实slave的代理方法
      *
@@ -88,25 +102,33 @@ export default class TabSlave {
     callPrivatePageMethod(methodName, options = {}, ...args) {
         return this.children.map(child => child.callPrivatePageMethod(methodName, options, ...args));
     }
+
     reLaunch(paramsObj) {
         this.setToIndex(paramsObj.url);
         this.children = this.constructMySlave();
-        return this.findChild(paramsObj.url).reLaunch(paramsObj);
+        return this.getCurrentChildren().reLaunch(paramsObj);
     }
+
     setToIndex(uri) {
         this.setCurrentIndex(this.findChildIndex(uri));
         return this.currentIndex;
     }
+
     setCurrentIndex(index) {
         this.currentIndex = index;
     }
+
     switchTab(paramsObj) {
         return this.swaninterface.invoke('switchTab', paramsObj);
     }
+
     onswitchTab({fromId, toId, toPage, toTabIndex}) {
         // 解决多个tab配置同一个页面case。先通过slaveId找，没找到则通过tab下标找
         let toChild = this.findChild(toId);
         let webviewIndex;
+        if (this.isTheSlave(fromId)) {
+            this.getCurrentChildren().hide();
+        }
         if (!toChild) {
             // 开发者工具暂时没传toTabIndex，走老逻辑通过url找页面
             if (toTabIndex === undefined) {
@@ -117,13 +139,14 @@ export default class TabSlave {
                 toChild = this.children[toTabIndex];
                 webviewIndex = toTabIndex;
             }
-
         }
         else {
             webviewIndex = this.getIndexBySlaveId(toId);
+            if (!toChild.getLoadToReadyStatus()) {
+                toChild.show();
+            }
         }
         this.setCurrentIndex(webviewIndex);
-
         // 触发被切换到的slave的onEnqueue
         return toChild.setSlaveId(toId).onEnqueue()
             .then(() => {
@@ -139,9 +162,11 @@ export default class TabSlave {
                 };
             });
     }
+
     redirect(paramsObj) {
         return this.getCurrentChildren().redirect(paramsObj);
     }
+
     open(paramsObj) {
         this.status = STATUS_MAP.CREATING;
         return this.getCurrentChildren().open(paramsObj)
@@ -150,6 +175,7 @@ export default class TabSlave {
                 return res;
             });
     }
+
     close() {
         this.children.forEach(child => child.close());
         this.status = STATUS_MAP.CLOSED;
@@ -157,5 +183,13 @@ export default class TabSlave {
     
     onEnqueue(params) {
         return this.getCurrentChildren().onEnqueue(params);
+    }
+
+    hide() {
+        return this.getCurrentChildren().hide();
+    }
+
+    show() {
+        return this.getCurrentChildren().show();
     }
 }

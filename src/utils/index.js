@@ -175,8 +175,7 @@ export const processParam = appInfo => {
 };
 
 
-export const noop = () => {
-};
+export const noop = () => {};
 
 export const getValueSafety = (data, path) => {
     return (new Data(data)).get(path);
@@ -340,10 +339,10 @@ export const deepAssign = (targetObject = {}, originObject) => {
         return targetObject;
     }
     else if (originType === '[object Date]') {
-        return new Date(originObj.getTime());
+        return new Date(originObject.getTime());
     }
     else if (originType === '[object RegExp]') {
-        const target = String(originObj);
+        const target = String(originObject);
         const lastIndex = target.lastIndexOf('/');
         return new RegExp(target.slice(1, lastIndex), target.slice(lastIndex + 1));
     }
@@ -399,17 +398,22 @@ export const getAppInfo = (swaninterface, noCache = false) => {
 };
 
 /**
- * 安全调用对象上的某一方法
+ * 参数分类
  *
- * @param {Object} obj - 被调用对象
- * @param {string} methodName - 对象上被调用的方法名
- * @param {...*} args - 传入方法的参数
+ * @param {Object} [originParams] - 开发者传入的参数
+ * @param {Object} [splitList] - 开发者传入的参数
+ * @return {Array} - 分类后的参数
  */
-export const callMethodSafty = (obj, methodName, ...args) => {
-    try {
-        obj[methodName] && obj[methodName](...args);
+export const paramSplit = (originParams, splitList = []) => {
+    let paramsList = [{}, {}];
+
+    for (let key in originParams) {
+        if (!~~splitList.indexOf(key)) {
+            paramsList[0][key] = originParams[key];
+        }
+        else {
+            paramsList[1][key] = originParams[key];
+        }
     }
-    catch (e) {
-        console.error(e);
-    }
+    return paramsList;
 };

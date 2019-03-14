@@ -19,9 +19,20 @@ export class Share {
         this.swaninterface = swaninterface;
         this.shareConfig = this.mergeShareConfig(shareConfig, {path: initPath});
     }
+    getAppNameAndDes(attribute) {
+        const attrValue = typeof global.__swanAppInfo === 'object'
+            ? global.__swanAppInfo[attribute]
+            : getAppInfo(this.swaninterface)[attribute];
+        return attrValue;
+    }
     mergeShareConfig(config, options) {
-        const title = getAppInfo(this.swaninterface).appname;
-        config = config || {...Share.shareDefaultConfig, ...{title}};
+        const title = this.getAppNameAndDes('appname');
+        const content = this.getAppNameAndDes('appDesc');
+        if (!!content) {
+            config = config || {...Share.shareDefaultConfig, ...{title}, ...{content}};
+        } else {
+            config = config || {...Share.shareDefaultConfig, ...{title}};
+        }
         return {...config, ...options};
     }
 

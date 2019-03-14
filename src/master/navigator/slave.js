@@ -8,23 +8,26 @@ import swanEvents from '../../utils/swan-events';
 import Communicator from '../../utils/communication';
 import {getParams, loader, executeWithTryCatch} from '../../utils';
 import splitAppAccessory from '../../utils/splitapp-accessory';
+import {customComponentStatistics} from '../../utils/custom-component';
 
-
+const global = window;
 export default class Slave {
+
     /**
      * Slave构造函数
      *
-     * @param {string} uri slave的uri
-     * @param {string} slaveId slave的唯一标识
-     * @param {Object} navigationParams slave的唯一标识
-     * @param {Object} swaninterface slave使用的swan-api
+     * @param {Object} option slave构造的初始信息对象
+     * @param {string} options.uri slave的uri
+     * @param {string=} option.slaveId slave的唯一标识
+     * @param {Object=} option.navigationParams slave的唯一标识
+     * @param {Object=} option.swaninterface slave使用的swan-api
      */
     constructor({
-            uri,
-            slaveId = null,
-            appConfig = {},
-            swaninterface = {}
-        }) {
+        uri,
+        slaveId = null,
+        appConfig = {},
+        swaninterface = {}
+    }) {
         this.uri = uri.split('?')[0];
         this.accessUri = uri;
         this.slaveId = slaveId;
@@ -35,7 +38,11 @@ export default class Slave {
         this.appRootPath = appConfig.appRootPath;
         /* globals masterManager */
         this.loadJsCommunicator = masterManager.communicator;
+        this.onLoadBetweenOnReady = false;
+        this.onLoadBetweenOnShow = false;
+        this.excuteOnReady = true;
     }
+
     /**
      * 判断slave当前状态
      *
@@ -44,6 +51,7 @@ export default class Slave {
     isCreated() {
         return this.status === STATUS_MAP.CREATED;
     }
+
     /**
      * 获取当前slave的uri
      *
@@ -52,6 +60,7 @@ export default class Slave {
     getUri() {
         return this.uri;
     }
+
     /**
      * 将slave实例与用户的page对象进行绑定，一实例一对象，自己管理自己的页面对象
      * userPageInstance为用户(开发者)定义的页面对象
@@ -61,6 +70,7 @@ export default class Slave {
     setUserPageInstance(userPageInstance) {
         this.userPageInstance = userPageInstance;
     }
+
     /**
      * 获取当前slave的开发者实例
      *
@@ -69,6 +79,7 @@ export default class Slave {
     getUserPageInstance() {
         return this.userPageInstance;
     }
+
     /**
      * 设置slave的id
      *
@@ -83,6 +94,7 @@ export default class Slave {
         this.slaveId = slaveId;
         return this;
     }
+
     /**
      * 获取当前slave的id
      *
@@ -91,6 +103,7 @@ export default class Slave {
     getSlaveId() {
         return this.slaveId;
     }
+
     /**
      * 设置当前slave的uri
      *
@@ -101,6 +114,7 @@ export default class Slave {
         this.uri = uri;
         return this;
     }
+
     /**
      * 获取slave展示给用户的slave的uri，对于普通slave来讲，当前展示的就是自己
      *
@@ -109,6 +123,7 @@ export default class Slave {
     getFrontUri() {
         return this.uri;
     }
+
     /**
      * 在当前slave中查找slave，对于普通slave来讲，获取的就是自己
      *
@@ -117,6 +132,7 @@ export default class Slave {
     findChild() {
         return this;
     }
+
     /**
      * 在当前的slave中查找
      *
@@ -125,14 +141,17 @@ export default class Slave {
     getCurrentChildren() {
         return this;
     }
+
     /**
      * 切换tab客户端回调函数
      *
      * @param {Object} params 切换tab后，客户端派发的参数
+     * @return {undefined} todo
      */
     onswitchTab(params) {
         return undefined;
     }
+
     /**
      * 调用当前slave的page对象的私有方法
      *
@@ -145,6 +164,7 @@ export default class Slave {
         return this.userPageInstance.privateMethod[methodName]
             .call(this.userPageInstance, ...args);
     }
+
     /**
      * 重登录到某一个特定页面
      *
@@ -223,6 +243,7 @@ export default class Slave {
                 return res;
             });
     }
+
     /**
      * 判断当前slave是否某一特定slave
      *
@@ -233,6 +254,7 @@ export default class Slave {
         return this.uri.split('?')[0] === ('' + tag).split('?')[0]
             || +this.slaveId === +tag;
     }
+
     /**
      * 初始化为第一个页面
      *
@@ -278,18 +300,23 @@ export default class Slave {
      */
     loadJs(params) {
         return new Promise(resolve => {
-            // 如果有分包，且有子包的话
+            // 有app.js拆分配置，且没有分包
             if (this.appConfig.splitAppJs && !this.appConfig.subPackages) {
                 this.loadFirst(params)
                     .then(() => resolve(params));
             }
-            // 如果没有分包，有root的时候，加载app.js
+            // 首页为分包页，加载该分包的app.js
             else if (!!params.root) {
                 loader.loadjs(`${this.appRootPath}/${params.root}/app.js`)
-                    .then(() => resolve(params));
+                    .then(() => {
+                        // 普通分包情况下自定义组件统计
+                        swanEvents('customComponentStatistics');
+                        resolve(params);
+                    });
             }
-            // 如果均没有，则直接返回
+            // 首页为正常页面
             else {
+                swanEvents('customComponentStatistics');
                 resolve(params);
             }
         });
@@ -341,8 +368,12 @@ export default class Slave {
                 splitAppAccessory.allJsLoaded = true;
                 typeof splitAppAccessory.routeResolve === 'function'
                     && splitAppAccessory.routeResolve();
+
+                // 拆appjs情况下自定义组件统计
+                swanEvents('customComponentStatistics');
             });
     }
+
     /**
      * 入栈之后的生命周期方法
      *
@@ -451,6 +482,7 @@ export default class Slave {
      * @return {Object} 打开页面以后返回对象
      */
     redirectToPage(navigationParams) {
+        this.hide();
         this.close();
         let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
         return new Promise((resolve, reject) => {
@@ -501,6 +533,7 @@ export default class Slave {
                 return res;
             });
     }
+
     /**
      * 创建页面实例，并且，当slave加载完成之后，向slave传递初始化data
      *
@@ -519,6 +552,9 @@ export default class Slave {
 
         try {
             swanEvents('masterPageOnLoadHookStart');
+            // 当前页面生命周期开始执行，锁定其他页面的生命周期或路由事件，待onReady后解锁
+            this.wrapLoadToReady();
+            this.wrapOnLoadToShow();
             userPageInstance._onLoad(getParams(query));
             swanEvents('masterPageOnLoadHookEnd');
         }
@@ -531,13 +567,19 @@ export default class Slave {
             eventObj: {
                 wvID: this.slaveId
             },
-            success: params => {
+            success: () => {
                 swanEvents('masterActiveCreatePageFlowEnd');
                 swanEvents('masterActiveSendInitdataStart');
                 userPageInstance.privateMethod
                     .sendInitData.call(userPageInstance, this.appConfig);
                 swanEvents('masterActiveSendInitdataEnd');
             }
+        }).then(data => {
+            userPageInstance._onShow({
+                firstInvoke: true
+            });
+            this.unWrapOnLoadToShow();
+            return data;
         });
     }
 
@@ -546,6 +588,54 @@ export default class Slave {
                 ...params,
                 url: '/' + params.url
             });
+    }
+
+    hide() {
+        try {
+            this.userPageInstance._onHide();
+        } catch (e) {
+            // avoid empty state
+        }
+    }
+
+    show() {
+        try {
+            this.userPageInstance._onShow();
+        } catch (e) {
+            // avoid empty state
+        }
+    }
+
+    wrapLoadToReady() {
+        this.onLoadBetweenOnReady = true;
+    }
+
+    unWrapLoadToReady() {
+        this.onLoadBetweenOnReady = false;
+    }
+
+    getLoadToReadyStatus() {
+        return this.onLoadBetweenOnReady;
+    }
+
+    wrapOnLoadToShow() {
+        this.onLoadBetweenOnShow = true;
+    }
+    unWrapOnLoadToShow() {
+        this.onLoadBetweenOnShow = false;
+    }
+    getOnloadToShowStatus() {
+        return this.onLoadBetweenOnShow;
+    }
+
+    jumpOnReady() {
+        this.excuteOnReady = false;
+    }
+    restoreOnReady() {
+        this.excuteOnReady = true;
+    }
+    getOnReadyStatus() {
+        return this.excuteOnReady;
     }
 
     /**

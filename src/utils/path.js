@@ -30,11 +30,17 @@ export const pathResolver = (originPath, path, errorCb) => {
  * @return {string} 计算出的文件的绝对路径
  */
 export const absolutePathResolver = (basePath, pagePath, path) => {
+    const httpRegExp = /^https?:\/\//;
     // 远程地址无需转换
-    if (/^https?:\/\//.test(path)) {
+    if (httpRegExp.test(path)) {
         return path;
     }
     // 绝对路径的话，不用page路径
     const pageRoute = /^\//.test(path) ? '' : pagePath.replace(/[^\/]*$/g, '');
-    return '/' + pathResolver(`${basePath}/${pageRoute}`, path).join('/');
+    let prefixPath = '/';
+    basePath = basePath.replace(httpRegExp, function (...args) {
+        prefixPath = args[0];
+        return '';
+    });
+    return prefixPath + pathResolver(`${basePath}/${pageRoute}`, path).join('/');
 };

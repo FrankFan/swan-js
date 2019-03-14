@@ -10,8 +10,8 @@ describe('swan Page data operation', function () {
 
 
     it('setData', function (done) {
-        var pageObject = null;
-        define('pages/component/setdata',
+        let pageObject = null;
+        define('pages/datatest/setdata',
             function (require, module, exports, define, swan, getApp,
                 window, document, frames, self, location, navigator, localStorage, history, Caches
             ) {
@@ -57,18 +57,15 @@ describe('swan Page data operation', function () {
                 });
             }
         );
-        window.__swanRoute = 'pages/component/setdata';
-        require('pages/component/setdata');
+        window.__swanRoute = 'pages/datatest/setdata';
+        require('pages/datatest/setdata');
 
         // when client dispatch an ready event
         window.basePath = '';
-        dispatchEvent('AppReady', {
-            pageUrl: 'pages/component/setdata',
-            wvID: '3',
-            appPath: '',
-            appConfig: '{"pages":["pages/datatest/datatest","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/datatest/datatest","text":"组件"}]}}'
-            // appConfig: '{"pages":["pages/component/component","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/component/component","text":"组件"},{"iconPath":"images/API_normal.png","selectedIconPath":"images/API_selected.png","pagePath":"pages/api/api","text":"接口"}]}}'
-        });
+        // dispatchEvent('AppReady', {
+        //     wvID: '3',
+        //     pageUrl: 'pages/datatest/setdata'
+        // });
         setTimeout(() => {
             pageObject.setData({
                 attr: 'yican update',
@@ -81,8 +78,8 @@ describe('swan Page data operation', function () {
                 },
                 name: ['john', 'leborn', 'james', 'yty', 'hy', 'test']
             });
-            expect(pageObject.getData('attr')).toEqual('yican update');
-        }, 20);
+            // expect(pageObject.getData('attr')).toEqual('yican update');
+        }, 200);
 
         setTimeout(() => {
             pageObject.pushData({
@@ -109,22 +106,22 @@ describe('swan Page data operation', function () {
             }, 1);
 
             // pageObject.createCanvasContext('myCanvas');
-        }, 20);
+        }, 200);
 
-        // setTimeout(function () {
-        //     pageObject.setData({
-        //         attr: 'yican update',
-        //         test: 'test update',
-        //         person: {
-        //             name: 'yican update',
-        //             with: {
-        //               tt: 'tt'
-        //             }
-        //         },
-        //         name: ['john', 'leborn', 'james', 'yty', 'hy', 'test']
-        //     });
-        //     expect(pageObject.getData('attr')).toEqual('yican update');
-        // }, 1);
+        setTimeout(() => {
+            pageObject.setData({
+                attr: 'yican update',
+                test: 'test update',
+                person: {
+                    name: 'yican update',
+                    with: {
+                      tt: 'tt'
+                    }
+                },
+                name: ['john', 'leborn', 'james', 'yty', 'hy', 'test']
+            });
+            expect(pageObject.getData('attr')).toEqual('yican update');
+        }, 200);
         done();
     });
 });

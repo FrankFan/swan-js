@@ -17,6 +17,7 @@ import {getCurrentPages, Page, slaveEventInit} from './page';
 import {apiProccess} from './proccessors/api-proccessor';
 import {loader} from '../utils';
 import Extension from '../extension';
+import firstRenderHookQueue from '../utils/firstRenderHookQueue';
 
 export default class Master {
 
@@ -32,7 +33,10 @@ export default class Master {
 
         this.swanEventsCommunicator = new EventsEmitter();
         this.virtualComponentFactory = new VirtualComponentFactory(swaninterface);
+        swanEvents('masterPreloadVirtualComponentFactoryInstantiated');
+
         this.extension = new Extension(context, swaninterface);
+        swanEvents('masterPreloadExtensionInstantiated');
 
         // perfAudit data hook
         this.perfAudit = {};
@@ -41,21 +45,41 @@ export default class Master {
         this.bindLifeCycleEvents();
         // 监听所有的slave事件
         const allSlaveEventEmitters = slaveEventInit(this);
+        swanEvents('masterPreloadAllSlaveEventsListened');
 
         this.pageLifeCycleEventEmitter = allSlaveEventEmitters.pageLifeCycleEventEmitter;
 
         // 装饰当前master的上下文(其实就是master的window，向上挂方法/对象)
         this.context = this.decorateContext(context);
+        swanEvents('masterPreloadContextDecorated');
 
         this.openSourceDebugger();
+
         // 监听appReady
         this.listenAppReady();
+        swanEvents('masterPreloadAppReadyListened');
+
+        // 监听首屏渲染
+        this.listenFirstRender();
+
         // 适配环境
         this.adaptEnvironment();
         // 解析宿主包
         this.extension.use(this);
-        swanEvents('masterPreloadGetMastermanager');
+
         swanEvents('masterPreloadEnd');
+    }
+
+    listenFirstRender() {
+        this.swaninterface.invoke('onMessage', data => {
+            if (data.type === 'slavePageComponentAttached' && !firstRenderHookQueue.firstRenderEnd) {
+                firstRenderHookQueue.firstRenderEnd = true;
+                while (!!firstRenderHookQueue.queue.length) {
+                    let hook = firstRenderHookQueue.queue.shift();
+                    hook.delay && hook.delay();
+                }
+            }
+        });
     }
 
     /**
@@ -69,7 +93,7 @@ export default class Master {
                 host, // IDE所在pc的host
                 port, // IDE所在pc的port
                 udid
-            } = JSON.parse(window._naSwan.getEnvVariables());
+            } = this.context._envVariables;
             if (!!isDebugSdk) {
                 this.context.swan.openSourceDebug = {
                     isDebugSdk
@@ -111,11 +135,11 @@ export default class Master {
                     .keys(appConfig.preloadRule)
                     .forEach(key => {
                         let item = appConfig.preloadRule[key];
-                        //配置项格式校验
+                        // 配置项格式校验
                         if (!(item.packages instanceof Array)) {
                             return;
                         }
-                        //预下载分包
+                        // 预下载分包
                         item.packages.forEach(rootName => {
                             // 校验是否已定义此项分包，为用户配置容错
                             rootConfigs.includes(rootName)
@@ -149,6 +173,7 @@ export default class Master {
             // 给三方用的，并非给框架用，请保留
             this.context.appConfig = event.appConfig;
             // 初始化master的入口逻辑
+            swanEvents('masterActiveInitRenderStart');
             this.initRender(event);
             this.preLoadSubPackage();
         });
@@ -163,6 +188,7 @@ export default class Master {
     decorateContext(context) {
         Object.assign(context, this.getAppMethods());
         context.masterManager = this;
+        swanEvents('masterPreloadMountMastermanagerToGlobal');
         context.define = define;
         context.require = require;
         context.swaninterface = this.swaninterface; // 远程调试工具的依赖
@@ -177,7 +203,6 @@ export default class Master {
         context.Behavior = this.virtualComponentFactory
             .defineBehavior.bind(this.virtualComponentFactory);
 
-        swanEvents('masterPreloadDecorateContext');
         return context;
     }
 
@@ -198,8 +223,8 @@ export default class Master {
                 appRootPath: initEvent.appPath
             }
         });
-        swanEvents('masterActiveInitRender');
         // 压入initSlave
+        swanEvents('masterActivePushInitSlaveStart');
         this.navigator.pushInitSlave({
             pageUrl: initEvent.pageUrl,
             slaveId: +initEvent.wvID,
@@ -208,7 +233,7 @@ export default class Master {
         });
 
         this.appPath = initEvent.appPath;
-        swanEvents('masterActivePushInitslave');
+
     }
 
     /**
@@ -261,11 +286,32 @@ export default class Master {
      */
     bindLifeCycleEvents() {
         this.lifeCycleEventEmitter = new EventsEmitter();
+        // this.triggerBackToHomeEvent = false;
+        const backToHomeStatus = this.navigator.getBackToHomeEventStatus();
+        // 终极方案此处仅监听onAppShow和onAppHide
+        let onAppShowTimes = 0;
+        const appLifeCycleEvents = ['onAppShow', 'onAppHide', 'onAppError', 'onPageNotFound'];
         this.swaninterface.bind('lifecycle', event => {
+            event.lcType === 'onAppShow' && onAppShowTimes++;
+            const hasAppLifeCycle = appLifeCycleEvents.some(lifecycle => lifecycle === event.lcType);
+            const canAppShowExcute = event.lcType === 'onAppShow' && onAppShowTimes < 2;
+            if (!hasAppLifeCycle || canAppShowExcute) {
+                return;
+            }
+            if (event.lcType === 'onAppHide') {
+                this.lifeCycleEventEmitter.fireMessage({
+                    type: 'onHide'
+                });
+            }
             this.lifeCycleEventEmitter.fireMessage({
-                type: event.lcType + (event.lcType === 'onShow' ? event.wvID : ''),
+                type: event.lcType,
                 event
             });
+            if (event.lcType === 'onAppShow' && !backToHomeStatus) {
+                this.lifeCycleEventEmitter.fireMessage({
+                    type: 'onShow'
+                });
+            }
         });
     }
 
@@ -283,14 +329,13 @@ export default class Master {
      */
     handleError(global) {
         global.addEventListener('error', e => {
-            console.log('error:', e);
             global.myerror = e;
             let app = global.getApp();
             app && app._onAppError({
                 appInfo: global.appInfo || {},
                 event: e,
                 type: 'onAppError'
-            })
+            });
         });
     }
 }

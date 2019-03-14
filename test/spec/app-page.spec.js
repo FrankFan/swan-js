@@ -64,8 +64,8 @@ describe('swan App & Page test', function () {
         pageUrl: 'pages/component/component',
         wvID: '1',
         appPath: '',
-        appConfig: '{"pages":["pages/datatest/datatest","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/datatest/datatest","text":"组件"}]}}'
-        // appConfig: '{"pages":["pages/component/component","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/lifycycle/lifycycle","text":"组件"},{"iconPath":"images/API_normal.png","selectedIconPath":"images/API_selected.png","pagePath":"pages/api/api","text":"接口"}]}}'
+        // appConfig: '{"pages":["pages/datatest/datatest","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/datatest/datatest","text":"组件"}]}}'
+        appConfig: '{"pages":["pages/component/component","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/lifycycle/lifycycle","text":"组件"},{"iconPath":"images/API_normal.png","selectedIconPath":"images/API_selected.png","pagePath":"pages/api/api","text":"接口"}]}}'
     });
     
     describe('swan App test', function () {
@@ -85,12 +85,12 @@ describe('swan App & Page test', function () {
                 expect(appShowe.query).toEqual(jasmine.any(String));
                 expect(appShowe.scene).toEqual(jasmine.any(String));
                 expect(appOnLaunch).toEqual(1);
-                expect(appOnShow).toEqual(2);
+                expect(appOnShow).toEqual(1);
                 expect(appOnHide).toEqual(0);
 
                 window.testutils.clientActions.appHide();
                 setTimeout(function () {
-                    expect(appOnShow).toEqual(2);
+                    expect(appOnShow).toEqual(1);
                     expect(appOnHide).toEqual(1);
                     done();
                 }, 1);

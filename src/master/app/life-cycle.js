@@ -4,6 +4,8 @@
  */
 import {processParam} from '../../utils/index';
 
+import {renderHookEnqueue} from '../../utils/firstRenderHookQueue';
+
 const lifeCyclePrototype = {
 
     /**
@@ -90,6 +92,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - appShow生命周期参数
      */
+    @renderHookEnqueue
     _onAppShow(params) {
         try {
             processParam(params.appInfo);
@@ -109,6 +112,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - appHide生命周期参数
      */
+    @renderHookEnqueue
     _onAppHide(params) {
         try {
             processParam(params.appInfo);
@@ -161,6 +165,7 @@ const lifeCyclePrototype = {
         });
     }
 };
+
 
 /**
  * 初始化app的生命周期的mixin函数

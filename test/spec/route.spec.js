@@ -17,49 +17,44 @@ describe('route test', () => {
             window.__swanRoute = uri;
             require(uri);
             dispatchEvent('AppReady', {
+                root: '',
+                appPath: 'http://localhost:9876/base/test/util',
                 pageUrl: uri,
-                wvID: '1',
-                appPath: '',
-                appConfig: '{'
-                +    '"pages": ['
-                +        `"${root}page1",`
-                +        `"${root}page2"`
-                +    '],'
-                +    '"tabBar": {'
-                +        '"list": ['
-                +            '{'
-                +               '"iconPath": "images/component_normal.png",'
-                +               '"selectedIconPath": "images/component_selected.png",'
-                +               `"pagePath": "${root}page1",`
-                +               '"text": "标签1"'
-                +            '},'
-                +            '{'
-                +               '"iconPath": "images/API_normal.png",'
-                +               '"selectedIconPath": "images/API_selected.png",'
-                +               `"pagePath": "${root}page2",`
-                +               '"text": "标签2"'
-                +            '}'
-                +        ']'
-                +    '}'
-                + '}'
+                wvID: 1,
+                appConfig: `{
+                   "pages": [
+                       "${root}page1",
+                       "${root}page2"
+                   ],
+                   "tabBar": {
+                       "list": [
+                            {
+                              "iconPath": "images/component_normal.png",
+                              "selectedIconPath": "images/component_selected.png",
+                              "pagePath": "${root}page1",
+                              "text": "标签1"
+                            },
+                            {
+                              "iconPath": "images/API_normal.png",
+                              "selectedIconPath": "images/API_selected.png",
+                              "pagePath": "${root}page2",
+                              "text": "标签2"
+                            }
+                        ]
+                    }
+                }`
             });
-            setTimeout(resolve, 5);
+            setTimeout(resolve, 10);
         });
-    }
-    function getHistoryStack() {
-        return window.masterManager.navigator.history.historyStack;
     }
     // +
     function getTopSlave() {
-        const historyStack = getHistoryStack();
+        const historyStack = window.getHistoryStack();
         return historyStack[historyStack.length - 1];
     }
     function getTopSlaveUri() {
         const topSlave = getTopSlave();
         return topSlave.uri ? topSlave.uri : topSlave.getCurrentChildren().uri;
-        // const historyStack = getHistoryStack();
-        // const topSlave = historyStack[historyStack.length - 1];
-        // return topSlave.uri ? topSlave.uri : topSlave.getCurrentChildren().uri;
     }
     beforeAll(() => {
         // 扩展swanInterface
@@ -82,7 +77,7 @@ describe('route test', () => {
         };
     });
     beforeEach(() => {
-        const historyStack = getHistoryStack();
+        const historyStack = window.getHistoryStack();
         if (historyStack && historyStack.length !== 0) {
             historyStack.forEach(item => item.close());
             window.masterManager.navigator.history.historyStack = [];
@@ -100,7 +95,6 @@ describe('route test', () => {
             });
         });
     });
-
     describe('swan route test', () => {
         it('Get one slave id', () => {
             createSwanPage().then(() => {
@@ -110,29 +104,26 @@ describe('route test', () => {
                 expect(newslaveId).toEqual(1);
             });
         });
-
         it('Get front uri', () => {
             createSwanPage().then(() => {
                 const topSlave = getTopSlave();
                 expect(topSlave.getFrontUri).toEqual(jasmine.any(Function));
-                
                 expect(topSlave.getFrontUri).toEqual(jasmine.any(Function));
                 const uri = topSlave.getFrontUri();
                 expect(uri).toEqual(jasmine.any(String));
                 expect(uri).toEqual(`${root}page1`);
             });
         });
-
         it('Get current childs', () => {
             createSwanPage().then(() => {
+                const {historyStack} = window.masterManager.navigator.history;
                 const topSlave = getTopSlave();
                 expect(topSlave.getCurrentChildren).toEqual(jasmine.any(Function));
                 const currentChild = topSlave.getCurrentChildren();
-                // expect(currentChild).toEqual(jasmine.any(Object));
-                // expect(currentChild.getSlaveId()).toEqual(1);
+                expect(currentChild).toEqual(jasmine.any(Object));
+                expect(currentChild.getSlaveId()).toEqual(1);
             });
         });
-
         it('Find child', () => {
             createSwanPage().then(() => {
                 const topSlave = getTopSlave();
@@ -145,17 +136,14 @@ describe('route test', () => {
                 expect(findChild).toEqual(jasmine.any(Object));
             });
         });
-
-        it('Page private method', done => {
+        it('Page private method', function(done) {
             createSwanPage().then(() => {
                 const slave = getTopSlave().getCurrentChildren();
                 slave.userPageInstance = {
                     ...slave.userPageInstance,
-                    pageObj: {
-                        privateMethod: {
-                            test() {
-                                called++;
-                            }
+                    privateMethod: {
+                        test() {
+                            called++;
                         }
                     }
                 }
@@ -163,10 +151,9 @@ describe('route test', () => {
                 slave.callPrivatePageMethod('test');
                 expect(called).toEqual(1);
                 called = 0;
-                done();
             });
+            done();
         });
-
         it('Should not init current page', ()=> {
             createSwanPage().then(() => {
                 const slave = getTopSlave();
@@ -181,22 +168,21 @@ describe('route test', () => {
                 spyOn(args, 'success');
                 init(args).then(() => {
                     expect(args.success).toHaveBeenCalled();
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(1);
                     expect(getTopSlaveUri()).toEqual(`${root}page1`);
                     done();
                 });
             });
         });
-    })
-
+    });
     describe('swan route test', () => {
         it('Should jump to another page', done => {
             expect(swan.navigateTo).toEqual(jasmine.any(Function));
             createSwanPage().then(() => {
                 // fecs规范: 回调嵌套不能超过三层
                 function verification() {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(historyStack[0].children[0].uri).toEqual(`${root}page1`);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
@@ -204,7 +190,7 @@ describe('route test', () => {
                 }
                 swan.navigateTo({
                     url: 'page2'
-                }).then(verification);
+                });
             });
         });
         it('Should redirect to a new page', done => {
@@ -218,7 +204,7 @@ describe('route test', () => {
                 spyOn(args, 'success');
                 swan.redirectTo(args).then(() => {
                     expect(args.success).toHaveBeenCalled();
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(1);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
                     done();
@@ -236,12 +222,12 @@ describe('route test', () => {
                 spyOn(args, 'fail');
                 swan.redirectTo(args).catch(() => {
                     expect(args.fail).toHaveBeenCalled();
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(1);
                     expect(getTopSlaveUri()).toEqual(`${root}page1`);
-                    done();
                 });
             });
+            done();
         });
         it('Should reLaunch current page', done => {
             expect(swan.reLaunch).toEqual(jasmine.any(Function));
@@ -254,7 +240,7 @@ describe('route test', () => {
                 spyOn(args, 'success');
                 swan.reLaunch(args).then(() => {
                     expect(args.success).toHaveBeenCalled();
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(1);
                     expect(getTopSlaveUri()).toEqual(`${root}page1`);
                     done();
@@ -272,7 +258,7 @@ describe('route test', () => {
                 spyOn(args, 'fail');
                 swan.reLaunch(args).catch(() => {
                     expect(args.fail).toHaveBeenCalled();
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
                     done();
@@ -281,14 +267,13 @@ describe('route test', () => {
         });
         it('Should switch current tab', done => {
             expect(swan.switchTab).toEqual(jasmine.any(Function));
-            // console.log('ifunccccc', swanInterface.switchTab({}));
-            // swanInterface.switchTab = () => {};
-            // spyOn(swanInterface, 'switchTab');
-            // createSwanPage().then(() => {
-            //     swan.switchTab({url: `${root}page2`});
-            //     expect(swanInterface.switchTab).toHaveBeenCalled();
-            //     done();
-            // });
+            swanInterface.switchTab = () => {};
+            spyOn(swanInterface, 'switchTab');
+            createSwanPage().then(() => {
+                swan.switchTab({url: `${root}page2`});
+                expect(swanInterface.switchTab).toHaveBeenCalled();
+                done();
+            });
             done();
         });
         it('Should return to the last page', done => {
@@ -305,7 +290,7 @@ describe('route test', () => {
                         routeType: 'navigateBack',
                         toId: `${root}page3`
                     });
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(3);
                     expect(getTopSlaveUri()).toEqual(`${root}page3`);
                 })
@@ -314,7 +299,7 @@ describe('route test', () => {
                         routeType: 'navigateBack',
                         toId: `${root}page2`
                     });
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
                 })
@@ -323,26 +308,27 @@ describe('route test', () => {
                         routeType: 'navigateBack',
                         toId: `${root}page1`
                     });
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(historyStack[0].getCurrentChildren().uri).toEqual(`${root}page1`);
                     done();
                 });
         });
+
         it('A complete test of route', done => {
             swanInterface.redirectTo = params => params.success({});
             swanInterface.reLaunch = params => params.success({});
             createSwanPage()
                 .then(() => createSwanPage(`${root}page2`))
                 .then(() => {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(historyStack[0].children[0].uri).toEqual(`${root}page1`);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
                 })
                 .then(() => swan.redirectTo({url: 'page1'}))
                 .then(() => {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(2);
                     expect(historyStack[0].children[0].uri).toEqual(`${root}page1`);
                     expect(getTopSlaveUri()).toEqual(`${root}page1`);
@@ -350,7 +336,7 @@ describe('route test', () => {
                 .then(() => swan.navigateTo({url: 'page3'}))
                 .then(() => swan.navigateTo({url: 'page4'}))
                 .then(() => {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(4);
                     expect(historyStack[0].getCurrentChildren().uri).toEqual(`${root}page1`);
                     expect(historyStack[1].getCurrentChildren().uri).toEqual(`${root}page1`);
@@ -358,7 +344,7 @@ describe('route test', () => {
                 })
                 .then(() => swan.redirectTo({url: 'page2'}))
                 .then(() => {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(4);
                     expect(getTopSlaveUri()).toEqual(`${root}page2`);
                 })
@@ -367,7 +353,7 @@ describe('route test', () => {
                         routeType: 'navigateBack',
                         toId: `${root}page3`
                     });
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(3);
                     expect(getTopSlaveUri()).toEqual(`${root}page3`);
                 })
@@ -379,13 +365,13 @@ describe('route test', () => {
                         routeType: 'navigateBack',
                         toId: `${root}page4`
                     });
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(5);
                     expect(getTopSlaveUri()).toEqual(`${root}page4`);
                 })
                 .then(() => swan.reLaunch({url: 'page5'}))
                 .then(() => {
-                    const historyStack = getHistoryStack();
+                    const historyStack = window.getHistoryStack();
                     expect(historyStack.length).toEqual(1);
                     expect(getTopSlaveUri()).toEqual(`${root}page5`);
                     done();

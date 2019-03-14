@@ -5,3 +5,4 @@ dist/
 output/
 **/.DS_Store
 test/coverage/
+eagle.py

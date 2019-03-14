@@ -34,7 +34,7 @@ module.exports = {
             // sourceMap: true,
             comments: false
         }),
-        
+
         new CopyWebpackPlugin([{
             from: __dirname + '/src/templates/**/*',
             to: __dirname + '/dist/box/[1]/[name].[ext]',

@@ -23,8 +23,7 @@ module.exports = merge(
                             ['istanbul', {
                                 'exclude': [
                                     'src/utils/**/*.js',
-                                    'test/spec/*.js',
-                                    'src/master/custom-component/index.js'
+                                    'test/spec/*.js'
                                 ]
                             }]
                         ]

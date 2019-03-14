@@ -339,6 +339,87 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                 });
             },
 
+            /**
+             * 调用当前页面的自定义组件上定义的方法
+             *
+             * @param {string} nodeId 自定义组件的id
+             * @param {string} methodName 自定义组件上反射调用的方法名
+             * @param {Object} eventValue 发生的事件对象
+             */
+            callComponentMethod(nodeId, methodName, eventValue) {
+                const reflectComponent = this.privateProperties.customComponents[nodeId];
+                if (reflectComponent
+                    && reflectComponent[event.value.reflectMethod]
+                ) {
+                    reflectComponent[event.value.reflectMethod]
+                        .call(reflectComponent, eventValue.e);
+                }
+                else {
+                    console.error('no method found');
+                }
+            },
+
+            /**
+             * 调用当前页面上的方法
+             *
+             * @param {string} methodName 页面上定义的方法名称
+             * @param {Object} eventValue 发生事件的事件对象
+             */
+            callMethod(methodName, eventValue) {
+
+                // 调用Page对象上的同名方法
+                this[methodName](eventValue.e);
+
+                /**
+                 * 根据传递的值推算出元素的属性
+                 *
+                 * @param {Object} target 元素的结构化对象
+                 * @return {Object} 元素的所有属性
+                 */
+                const getAttributes = target => {
+                    const dataset = target.dataset;
+                    let attributes = {};
+
+                    for (let name in dataset) {
+                        attributes[`data-${name}`] = dataset[name];
+                    }
+                    attributes['id'] = target.id;
+                    return attributes;
+                };
+
+                let returnValue = null;
+
+                this.privateProperties.hooks
+                    .forEach(hook => {
+                        for (let eventKey in hook.events) {
+                            const attributeExpression = /\[([^=]*?)(=['"]([^=]*?)['"])?\]:(.*?)$/g
+                                .exec(eventKey);
+                            if (attributeExpression) {
+                                const [, attributeKey, , attributeValue, eventType] = attributeExpression;
+                                const processedKey = attributeKey
+                                    .replace(/(data-)(.*)$/, (all, prefix, suffix) => {
+                                        return prefix + suffix
+                                            .replace(/-(\w)/, (all, word) => word.toUpperCase());
+                                    });
+                                const attributes = getAttributes(eventValue.e.currentTarget);
+                                for (let name in attributes) {
+                                    if (processedKey === name
+                                        && (attributeValue === attributes[name]
+                                            || attributeValue === undefined)
+                                        && eventValue.eventType === eventType
+                                    ) {
+                                        returnValue = hook.events[eventKey]({
+                                            target: eventValue.e.currentTarget,
+                                            thisObject: this,
+                                            args: eventValue.e
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    });
+            },
+
             ...masterManager.virtualComponentFactory.getCustomComponentMethods(),
             ...masterManager.swanComponents.getComponentRecievers(masterManager.communicator)
         }

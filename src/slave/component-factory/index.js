@@ -4,6 +4,8 @@
  */
 
 import san from 'san';
+import {loader} from '../../utils/';
+import {insertRuleForLink} from '../../utils/insertRule';
 import swanEvents from '../../utils/swan-events';
 import Communicator from '../../utils/communication';
 
@@ -26,6 +28,51 @@ export default class SanFactory {
             communicator,
             ...this.componentDefaultProps
         };
+    }
+
+    /**
+     * 转换自定义组件css 方法
+     *
+     * @param {Array} customComponentCss 编译后的 css 数组
+     * @param {string} prefix css 转换需要的前缀
+     */
+    translateAllCustomImportCss(customComponentCss, prefix) {
+        let tranlatededCss = Object.create(null);
+        const doTranslateAllCustomImportCss = componentCss => {
+            if (componentCss.length === 0) {
+                return '';
+            }
+            let result = '';
+            // 分四种情况：正常 css,'swan-'前缀，'xx__'前缀,import 引用的 css,[2]一组 rules结束
+            componentCss.forEach(cssItem => {
+                if (Array.isArray(cssItem)) {
+                    let item = cssItem[0];
+                    if (item === 0) {
+                        result += prefix + '__';
+                    } else if (item === 1) {
+                        result += ('swan-' + prefix + ' ');
+                    } else if (item === 2) {
+                        let rulePrefixReg = new RegExp(`.${prefix}__${prefix}__`, 'g');
+                        result = result.replace(rulePrefixReg, '.' + prefix + '__');
+                        insertRuleForLink(result, {
+                            key: 'linkname',
+                            value: 'app'
+                        });
+                        result = '';
+                    }
+                } else if (typeof cssItem === 'string') {
+                    result += cssItem;
+                } else if (cssItem.constructor === Object) {
+                    let customAbsolutePath = cssItem.path;
+                    if (!tranlatededCss[customAbsolutePath]) {
+                        tranlatededCss[customAbsolutePath] = true;
+                        doTranslateAllCustomImportCss(
+                            this.allCustomComponentsImportCss[customAbsolutePath] || []);
+                    }
+                }
+            });
+        };
+        doTranslateAllCustomImportCss(customComponentCss);
     }
 
     /**
@@ -58,7 +105,6 @@ export default class SanFactory {
      * @return {Object} 获取的所有的注册的组件
      */
     getComponents(componentName = this.getAllComponentsName()) {
-
         const componentNames = [].concat(componentName);
 
         const components = componentNames.reduce((componentSet, componentName) => {
@@ -221,6 +267,95 @@ export default class SanFactory {
     getProtos(componentName) {
         return this.componentInfos[componentName]
             && this.componentInfos[componentName].componentPrototype;
+    }
+
+    /**
+     *  根据 map创建自定义组件
+     *
+     * @param {Object} componentUsingComponentMap - 自定义组件 map
+     * @return {Object} - 获取到的组件proto的集合
+     */
+    getComponentsForMap(componentUsingComponentMap) {
+        const appPath = window.pageInfo.appPath;
+        let that = this;
+        return Promise.all([
+            loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded', [{
+                key: 'linkname',
+                value: 'app'
+            }]),
+            loader.loadjs(`${appPath}/allImportedCssContent.js`),
+            loader.loadjs(`${appPath}/allCusomComponents.swan.js`)
+        ]).then(function () {
+            let comstomUsingCompoentMap = Object.create(null);
+            let customComponentsSizeInfo = {};
+            let niqueIndex = 0;
+            let componentFragments = that.getAllComponents();
+            const getComponentEvent = function (componentUsingComponentMap) {
+                let allComponents = Object.create(null);
+                Object.keys(componentUsingComponentMap).forEach(customAbsolutePath => {
+                    let customNamesArr = componentUsingComponentMap[customAbsolutePath];
+                    // 加载依赖的组件
+                    let customComponentObj = window.require(customAbsolutePath);
+                    if (!customComponentsSizeInfo[customAbsolutePath]) {
+                        customComponentsSizeInfo[customAbsolutePath] = customComponentObj['size'] || 0;
+                    }
+                    // 深度遍历加载创建-同步构建
+                    if (Object.keys(customComponentObj.componentUsingComponentMap).length) {
+                        if (!comstomUsingCompoentMap[customAbsolutePath]) {
+                            comstomUsingCompoentMap[customAbsolutePath] = {};
+                            let components = getComponentEvent(customComponentObj.componentUsingComponentMap);
+                            Object.assign(comstomUsingCompoentMap[customAbsolutePath], components);
+                        }
+                    } else {
+                        comstomUsingCompoentMap[customAbsolutePath] = {};
+                    }
+                    // 创建自定义组件的template，传入该自定义组件使用的组件
+                    let customTemplateComponents = customComponentObj.createTemplateComponent(
+                        Object.assign(componentFragments, comstomUsingCompoentMap[customAbsolutePath]));
+                    customNamesArr.forEach(prefix => {
+                        let swanPrefix = 'swan-' + prefix;
+                        let i = niqueIndex++;
+                        that.translateAllCustomImportCss(customComponentObj.customComponentCss, prefix);
+                        // 避免组件名重复造成 css 覆盖问题
+                        let componentUniqueName = 'components/' + prefix + '/' + prefix + i;
+                        that.componentDefine(componentUniqueName, Object.assign({},
+                            that.getProtos('super-custom-component'), {
+                                // superComponent: 'super-custom-component',
+                                template: '<' + swanPrefix + '>'
+                                    + customComponentObj.template + '</' + swanPrefix + '>',
+                                componentPath: customComponentObj.componentPath,
+                                componentName: prefix,
+                                customComponentCss: ''
+                            }
+                        ), {
+                                classProperties: {
+                                    components: Object.assign(comstomUsingCompoentMap[customAbsolutePath],
+                                        componentFragments, customTemplateComponents),
+                                    filters: Object.assign({}, customComponentObj.filters)
+                                }
+                            }
+                        );
+                        allComponents[prefix] = that.getComponents(componentUniqueName);
+                    });
+                });
+                return allComponents;
+            };
+            let customComponents = getComponentEvent(componentUsingComponentMap);
+            let allCustomComponentsNum = 0;
+            let allCustomComponentsSize = Object.keys(customComponentsSizeInfo).reduce((total, customAbsolutePath) => {
+                total += parseInt(customComponentsSizeInfo[customAbsolutePath], 10);
+                allCustomComponentsNum += 1;
+                return total;
+            }, 0);
+            return {
+                customComponents,
+                customComponentsSizeInfo: {
+                    allCustomComponentsSize: allCustomComponentsSize,
+                    allCustomComponentsNum: allCustomComponentsNum
+                }
+            };
+
+        });
     }
 }
 

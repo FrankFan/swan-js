@@ -7,6 +7,7 @@
 <body>
     <script src="context.js"></script>
     <script type="text/javascript">
+        var swanGlobal = undefined
         // Configure our Karma and set up bindings
         %CLIENT_CONFIG%
         window.__karma__.setupContext(window);
@@ -17,6 +18,7 @@
     %SCRIPTS%
     <script type="text/javascript">
         window.__karma__.loaded();
+        var swanGlobal = undefined
     </script>
 </body>
 </html>

@@ -42,7 +42,7 @@ export default class Loader {
             }
         });
     }
-    loadcss(src, action) {
+    loadcss(src, action, attrArray = []) {
         const loadPath = this.basePath + src;
         if (this.loadedResource.js[loadPath]) {
             return Promise.resolve();
@@ -52,6 +52,9 @@ export default class Loader {
             link.type = 'text/css';
             link.rel = 'stylesheet';
             link.href = loadPath;
+            attrArray.forEach(item => {
+                link.setAttribute(item['key'], item['value']);
+            });
             link.onload = () => {
                 this.loadedResource.css[loadPath] = true;
                 action && swanEvents(action);

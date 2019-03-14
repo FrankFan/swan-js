@@ -13,6 +13,7 @@ import {getAppInfo} from '../../utils';
  *
  * @param {Object} [appObject] - app对象的实例
  * @param {Object} [swaninterface] - swaninterface小程序底层接口
+ * @param {Object} [lifeCycleEventEmitter] - 生命周期的事件流
  */
 const bindLifeCycleEvent = (appObject, swaninterface, lifeCycleEventEmitter) => {
     const appEventsToLifeCycle = ['onAppShow', 'onAppHide', 'onAppError', 'onPageNotFound'];
@@ -41,7 +42,7 @@ const bindLifeCycleEvent = (appObject, swaninterface, lifeCycleEventEmitter) => 
                 type: event.lcType
             });
         });
-    swanEvents('masterPreloadInitBindingEnvironmentEvents');
+    swanEvents('masterActiveInitBindingEnvironmentEvents');
 };
 
 /**
@@ -49,9 +50,11 @@ const bindLifeCycleEvent = (appObject, swaninterface, lifeCycleEventEmitter) => 
  *
  * @param {Object} [swaninterface] - swan底层接口
  * @param {Object} [appLifeCycleEventEmitter] - app的数据流
+ * @param {Object} [lifeCycleEventEmitter] - 整体生命周期的事件流对象
  * @return {Object} 所有App相关方法的合集
  */
 export const getAppMethods = (swaninterface, appLifeCycleEventEmitter, lifeCycleEventEmitter) => {
+
     let initedAppObject = null;
 
     const getApp = () => initedAppObject;
@@ -64,7 +67,8 @@ export const getAppMethods = (swaninterface, appLifeCycleEventEmitter, lifeCycle
         try {
             global.rainMonitor.opts.appkey = appInfo['appid'];
             global.rainMonitor.opts.cuid = appInfo['cuid'];
-        } catch (e) {
+        }
+        catch (e) {
             // avoid empty state
         }
         initedAppObject = mixinLifeCycle(appObject, appLifeCycleEventEmitter);
@@ -77,9 +81,61 @@ export const getAppMethods = (swaninterface, appLifeCycleEventEmitter, lifeCycle
             event: {},
             type: 'onAppLaunch'
         });
+
+        // 触发onAppShow事件
+        initedAppObject._onAppShow({
+            appInfo,
+            event: {},
+            type: 'onAppShow'
+        });
         swanEvents('masterOnAppLaunchHookEnd');
         return initedAppObject;
     };
+
+    /**
+     * 用于存放所有的App的生命周期的hook
+     *
+     * @private
+     * @type {Object}
+     */
+    App._hooks = {
+        onShow: [],
+        onHide: [],
+        onLaunch: [],
+        onError: [],
+        onPageNotFound: []
+    };
+
+    /**
+     * 增加切面的方法，此方法可以增加所有App级别的生命周期的hook方法
+     *
+     * @param {Object} options 传入的切面对象
+     * @param {Object} options.methods 传入的切面，拦截的所有生命周期方法
+     */
+    App.after = function (options) {
+        if (options.methods) {
+            for (let methodName in options.methods) {
+                if (App._hooks[methodName]) {
+                    let method = options.methods[methodName];
+                    App._hooks[methodName].push(method);
+                }
+            }
+        }
+    };
+
+    appLifeCycleEventEmitter
+        .onMessage('ApplifeCycle', ({params}) => {
+            if (App._hooks[params.eventName]) {
+                let returnValue = null;
+                App._hooks[params.eventName].forEach(method => {
+                    returnValue = method({
+                        args: params.e,
+                        returnValue,
+                        thisObject: initedAppObject
+                    });
+                });
+            }
+        });
 
     return {
         App,

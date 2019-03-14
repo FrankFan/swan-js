@@ -23,6 +23,7 @@ export default class Slave {
         this.context.require = require;
         this.context.define = define;
         this.context.san = san;
+        this.context.errorMsg = [];
         this.context.swan = swaninterface.swan;
         this.context.swaninterface = swaninterface; // 远程调试用
         this.swaninterface = swaninterface;
@@ -46,7 +47,7 @@ export default class Slave {
                 host, // IDE所在pc的host
                 port, // IDE所在pc的port
                 udid
-            } = JSON.parse(window._naSwan.getEnvVariables());
+            } = this.context._envVariables;
             if (!!isDebugSdk) {
                 // 提供使用的udid和所通信pc地址，便于ws连接
                 window._openSourceDebugInfo = {host, port: +port, udid};
@@ -68,9 +69,9 @@ export default class Slave {
      * @param {Object} [global] 全局对象
      */
     listenPageReady(global) {
-        swanEvents('slavePreloadListened');
         // 控制是否开启预取initData的开关
         let advancedInitDataSwitch = false;
+        let that = this;
         this.swaninterface.bind('PageReady', event => {
             swanEvents('slaveActiveStart', {
                 pageInitRenderStart: Date.now() + ''
@@ -123,20 +124,78 @@ export default class Slave {
                 swanEvents('slaveActivePageLoadStart');
                 // 加载用户的资源
                 Promise.all([
-                    loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded'),
+                    loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded', [{
+                        key: 'linkname',
+                        value: 'app'
+                    }]),
                     loader.loadcss(`${appPath}/${pagePath}.css`, 'slaveActivePageCssLoaded')
                 ])
                 .catch(() => {
                     console.warn('加载css资源出现问题，请检查css文件');
                 })
                 .then(() => {
-                    // todo: 兼容天幕，第一个等天幕同步后，干掉
                     swanEvents('slaveActiveCssLoaded');
-                    swanEvents('slaveActiveSwanJsStart');
-                    loader.loadjs(`${appPath}/${pagePath}.swan.js`, 'slaveActiveSwanJsLoaded');
+                    swanEvents('slaveActiveSwanJsLoadStart');
+                    loader.loadjs(`${appPath}/${pagePath}.swan.js`, 'slaveActiveSwanJsLoaded').then(() => {
+                        try {
+                            let pageContentInfo = that.context.require(`${pagePath}.swan`);
+                            that.createAllComponents(pageContentInfo);
+                        } catch (e) {
+                            window.errorMsg['execError'] = e;
+                        }
+                    });
                 });
             };
             (event.devhook === 'true' ? loadHook().then(loadUserRes).catch(loadUserRes) : loadUserRes());
+        });
+        swanEvents('slavePreloadPageReadyListened');
+    }
+
+    createAllComponents(pageContentInfo) {
+        let componentFactory = window.componentFactory;
+        let componentFragments = componentFactory.getAllComponents();
+        // 当前页面使用的自定义组件
+        let componentUsingComponentMap = pageContentInfo.componentUsingComponentMap;
+        let pageContent = pageContentInfo.template;
+        let isComponent = pageContentInfo.isComponent;
+        if (isComponent) {
+            pageContent = '<custom-component></custom-component>';
+            componentUsingComponentMap = {};
+            componentUsingComponentMap[pageContentInfo.componentPath] = ['custom-component'];
+        }
+        let initialFilters = pageContentInfo.initialFilters;
+        let modules = pageContentInfo.pageModules;
+        // 当前页面的自定义组件是否包含了自定义组件
+        let pageComponentUsingCustomComponent = !!Object.keys(componentUsingComponentMap).length;
+        Promise.resolve().then(() => {
+            if (!pageComponentUsingCustomComponent) {
+                return {
+                    customComponents: {},
+                    pageTemplateComponents: pageContentInfo.createTemplateComponent(componentFragments)
+                };
+            } else {
+                let getComponentsForMap = Object.create(null);
+                let templateComponents = Object.create(null);
+                getComponentsForMap = componentFactory.getComponentsForMap(componentUsingComponentMap);
+                return getComponentsForMap.then(customComponentsInfo => {
+                    let customComponents = customComponentsInfo.customComponents;
+                    let customComponentsSizeInfo = customComponentsInfo.customComponentsSizeInfo;
+                    // 给页面template使用的组件赋值
+                    Object.assign(templateComponents, componentFragments, customComponents);
+                    let pageTemplateComponents = pageContentInfo.createTemplateComponent(templateComponents);
+                    return {
+                        customComponents: customComponents,
+                        pageTemplateComponents: pageTemplateComponents,
+                        customComponentsSizeInfo: customComponentsSizeInfo
+                    };
+                });
+            }
+        }).then(function (pageInfo) {
+            window.pageRender(pageContent, pageInfo.pageTemplateComponents,
+                pageInfo.customComponents, initialFilters, modules, 'newTemplate', pageInfo.customComponentsSizeInfo);
+        }).catch(function (e) {
+            window.errorMsg['execError'] = e;
+            throw e;
         });
     }
 
@@ -159,7 +218,8 @@ export default class Slave {
 
         global.componentFactory = componentFactory;
 
-        global.pageRender = (pageTemplate, templateComponents, customComponents, filters, modules) => {
+        global.pageRender = (pageTemplate, templateComponents,
+            customComponents, filters, modules, from, customComponentsSizeInfo) => {
             // 用于记录用户模板代码在执行pageRender之前的时间消耗，包括了pageContent以及自定义模板的代码还有filter在加载过程中的耗时
             global.FeSlaveSwanJsParseEnd = Date.now();
             let filtersObj = {};
@@ -171,7 +231,6 @@ export default class Slave {
                 };
             });
 
-            global.isNewTemplate = true;
             swanEvents('slaveActivePageRender', pageTemplate);
             // 定义当前页面的组件
             componentFactory.componentDefine(
@@ -179,6 +238,7 @@ export default class Slave {
                 {
                     template: `<swan-page tabindex="-1">${pageTemplate}</swan-page>`,
                     superComponent: 'super-page'
+
                 },
                 {
                     classProperties: {
@@ -189,17 +249,17 @@ export default class Slave {
                     }
                 }
             );
-            swanEvents('slaveActiveDefineComponentPage');
+            swanEvents('slaveActiveDefinePageComponentEnd');
             // 获取page的组件类
             const Page = global.componentFactory.getComponents('page');
 
             // 初始化页面对象
             const page = new Page();
-            swanEvents('slaveActiveConstructUserPage');
+            swanEvents('slaveActivePageComponentInstantiated');
 
             // 调用页面对象的加载完成通知
             page.slaveLoaded();
-            swanEvents('slaveActiveUserPageSlaveloaded');
+            swanEvents('slaveActiveNoticeMasterSlaveloaded');
             // 用于记录用户模板代码在开始执行到监听initData事件之前的耗时
             global.FeSlaveSwanJsInitEnd = Date.now();
 
@@ -211,10 +271,7 @@ export default class Slave {
                     page.setInitData(params);
                     swanEvents('slaveActiveRenderStart');
 
-                    // 真正的页面渲染，发生在initData之后
-                    // 此处让页面真正挂载处于自定义组件成功引用其他自定义组件之后,
-                    // 引用其它自定义组件是在同一时序promise.resolve().then里执行, 故此处attach时, 自定义组件已引用完成
-                    setTimeout(() => {
+                    const attachPage = function () {
                         page.attach(document.body);
                         // 通知master加载首屏之后的逻辑
                         page.communicator.sendMessage(
@@ -224,7 +281,18 @@ export default class Slave {
                             }
                         );
                         swanEvents('slaveActivePageAttached');
-                    }, 0);
+                    };
+                    if (from === 'newTemplate') {
+                        // 新编译优化后同步执行即可
+                        attachPage();
+                    } else {
+                        // 真正的页面渲染，发生在initData之后
+                        // 此处让页面真正挂载处于自定义组件成功引用其他自定义组件之后,
+                        // 引用其它自定义组件是在同一时序promise.resolve().then里执行, 故此处attach时, 自定义组件已引用完成
+                        setTimeout(() => {
+                            attachPage();
+                        }, 0);
+                    }
 
                 }
                 catch (e) {
@@ -249,6 +317,9 @@ export default class Slave {
             if (global.PageComponent) {
                 Object.assign(global.PageComponent.components, customComponents);
             }
+            if (customComponentsSizeInfo) {
+                swanEvents('customComponentStatistics', customComponentsSizeInfo);
+            }
         };
 
         const compatiblePatch = () => {
@@ -262,8 +333,47 @@ export default class Slave {
          * 修复浏览器兼容问题
          */
         const browserPatch = () => {
+            // 长按时长
+            const LONG_PRESS_TIME_THRESHOLD = 350;
+            let timer = null;
+            let time = {};
             // 兼容部分安卓机划动问题
             document.body.addEventListener('touchmove', () => {});
+            document.body.addEventListener('touchstart', e => {
+                const target = e.target;
+                const touchstart = el => {
+                    time.start = Date.now();
+                    timer = setTimeout(() => {
+                        let event = document.createEvent('Event');
+                        event.initEvent('longtapevent', true, true
+                        );
+                        Object.assign(event, {
+                            changedTouches: el.changedTouches
+                        });
+                        target.dispatchEvent(event);
+                        target.removeEventListener('touchstart', touchstart);
+                    }, LONG_PRESS_TIME_THRESHOLD);
+                };
+                const touchend =  el => {
+                    time.end = Date.now();
+                    clearTimeout(timer);
+                    if (time.end - time.start < LONG_PRESS_TIME_THRESHOLD) {
+                        let event = document.createEvent('Event');
+                        event.initEvent('tapevent', true, true
+                        );
+                        Object.assign(event, {
+                            changedTouches: el.changedTouches
+                        });
+                        target.dispatchEvent(event);
+                        target.removeEventListener('touchend', touchend);
+                        target.removeEventListener('touchstart', touchstart);
+                    }
+                };
+
+                target.addEventListener('touchstart', touchstart);
+                target.addEventListener('touchend', touchend);
+
+            }, true);
         };
         browserPatch();
     }

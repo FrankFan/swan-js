@@ -40,13 +40,14 @@ export default class Extension {
                     } = description;
                     // 默认的name就是description本身，如果开发者有特殊要求会写成对象
                     let {
-                        name = description
+                        name = description,
+                        path = description
                     } = description;
                     // 最后配置文件要用的配置
                     return {
                         args,
                         name,
-                        path: name,
+                        path,
                         authority: 'v26/swan'
                     };
                 })
@@ -72,29 +73,23 @@ export default class Extension {
                 .forEach(apiName => {
                     const api = service.methods[apiName];
                     switch (typeof api) {
-
                         // 如果直接传function，默认直接挂载到namespace上
                         case 'function':
                             swanHostSpace[apiName] = api;
                             break;
-
                         // 正确逻辑
                         case 'object':
-                            api.scope === 'root'
-                                ? (swan[apiName] = api.method)
-                                : (swanHostSpace[apiName] = api.method);
+                            api.scope === 'root' ? (swan[apiName] = api.method) : (swanHostSpace[apiName] = api.method);
                             break;
-
                         // 格式错误
                         default:
                             console.error('api in extension-methods must function or object');
                             break;
-
                     }
                 });
 
         // 在debug模式下，将extension信息提供给debug小程序以提示宿主
-        if (!!JSON.parse(window._naSwan.getEnvVariables()).isDebugSdk) {
+        if (!!this.context._envVariables.isDebugSdk) {
             this.context.swan._extensionSrc = service;
         }
     }
@@ -109,34 +104,16 @@ export default class Extension {
         Object
             .keys(service.components)
             .forEach(ComponentName => {
-
                 let finalComponentName = ComponentName;
-
                 if (service.components[ComponentName].scope !== 'root') {
                     finalComponentName = nameSpace + '-' + ComponentName;
                 }
-
                 this.context.componentFactory.componentDefine(
                     finalComponentName, service.components[ComponentName]
                 );
             });
-            this.context.componentFactory.getComponents();
+        this.context.componentFactory.getComponents();
     }
-
-    /**
-     * 获取宿主extension路径
-     *
-     * @return {string|boolean} 拼接结果
-     */
-    getExtensionPath() {
-        try {
-            // 获取客户端给出的初始化信息
-            return JSON.parse(window._naSwan.getEnvVariables()).sdkExtension;
-        } catch (ex) {
-            return false;
-        }
-    }
-
 
     /**
      * 加载并使用宿主的extension包
@@ -147,7 +124,7 @@ export default class Extension {
         const isMaster = !isSlave;
 
         // 获得extension路径
-        const extensionPath = this.getExtensionPath();
+        const extensionPath = this.context._envVariables.sdkExtension;
         if (!extensionPath) {
             return;
         }

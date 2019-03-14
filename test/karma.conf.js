@@ -12,10 +12,10 @@ module.exports = function(config) {
     customContextFile: 'test/swan-context.html',
 
     files: [
+        'test/util/*.js',
         'test/mock/mock.js',
         'test/mock/master.mock.js',
         'test/spec/*.spec.js',
-        'test/util/*.js',
         {pattern: 'test/mock/slave.mock.js', included: false, served: true},
         {pattern: 'test/spec/util.spec.js', included: false}
     ],

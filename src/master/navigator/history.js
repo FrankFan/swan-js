@@ -3,12 +3,15 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
+import {noop} from '../../utils';
 
 export default class History {
+
     constructor(initSlaves = []) {
         this.historyStack = initSlaves;
-        swanEvents('masterPreloadCreateHistorystack')
+        swanEvents('masterPreloadCreateHistorystack');
     }
+
     /**
      * 将一个slave推入栈中
      *
@@ -37,7 +40,7 @@ export default class History {
     /**
      * 替换栈顶的slave
      *
-     * @param {object} slave 要被替换至栈顶的slave
+     * @param {Object} slave 要被替换至栈顶的slave
      * @return {number} 推入后栈新的长度(同array.push)
      */
     replaceHistory(slave) {
@@ -57,6 +60,8 @@ export default class History {
 
     /**
      * 获取整个栈
+     *
+     * @return {Array} 页面栈数组
      */
     getAllSlaves() {
         return this.historyStack;
@@ -86,7 +91,12 @@ export default class History {
      */
     clear() {
         try {
-            this.historyStack.forEach(slave => slave.close());
+            let historyStackCopy = [];
+            Array.prototype.push.apply(historyStackCopy, this.historyStack);
+            historyStackCopy.reverse();
+            historyStackCopy.forEach(slave => {
+                slave.close();
+            });
         }
         catch (e) {
             console.error('析构出现错误:', e);
@@ -112,18 +122,30 @@ export default class History {
      */
     seek(slaveId, getSuperSlave) {
         const superSlave = this.historyStack
-        .find(item => item.isTheSlave(slaveId));
+            .find(item => item.isTheSlave(slaveId));
         return getSuperSlave ? superSlave : superSlave && superSlave.findChild(slaveId);
     }
 
     /**
      * 对于页面栈中的所有节点进行遍历
      *
-     * @param {Function} fn 每次遍历调用的函数
+     * @param {Function} [fn] - 每次遍历调用的函数
+     * @param {Object} [options] - 调用可选项
+     * @param {boolean} [options.recursive] - 调用可选项
      */
-    each(fn) {
+    each(fn = noop, options = {}) {
         this.historyStack.forEach(slave => {
-            fn && fn(slave);
+            if (options.recursive && slave.children) {
+                slave.children.forEach(fn);
+            }
+            else {
+                fn(slave);
+            }
         });
+    }
+
+    getCurrentSlaveId() {
+        const topSlave = this.getTopSlaves()[0];
+        return topSlave.getSlaveId();
     }
 }

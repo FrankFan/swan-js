@@ -1,4 +1,12 @@
 const noop = function () {};
+window.swan = {
+    getNetworkType(obj){
+        obj.success && obj.success({
+            networkType: 'wifi'
+        });
+    },
+    loadSubPackage(){}
+}
 window.swanInterface = {
 	handlerQueue:[],
 	loadJsQueue:{},
@@ -144,10 +152,12 @@ window.testutils = {
         appReady: function (slaveId, pageUrl) {
             this.dispatchEvent('AppReady', {
                 // pageUrl: 'pages/component/component',
+                root: '',
+                appPath: 'http://localhost:9876/base/test/util',
+                appRootPath: 'http://localhost:9876/base/test/util',
                 pageUrl: pageUrl,
                 wvID: slaveId,
-                // wvID: '1',
-                appP: '',
+                preventAppLoad: false,
                 appConfig: '{"pages":["' + pageUrl + '","pages/api/api"], "tabBar": {"list": [{"iconPath":"images/component_normal.png","selectedIconPath":"images/component_selected.png","pagePath":"pages/component/component","text":"组件"},{"iconPath":"images/API_normal.png","selectedIconPath":"images/API_selected.png","pagePath":"pages/api/api","text":"接口"}]}}'
             });
             this.appShow();

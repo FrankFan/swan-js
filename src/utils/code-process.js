@@ -26,3 +26,28 @@ export const executeWithTryCatch = (fn, context, errorMessage, args) => {
     }
     return execResult;
 };
+
+
+/**
+ * 获取Promise化后的一些API接口
+ *
+ * @param {Object} [swan] - 要包装的swan对象
+ * @param {string|Function} [rules] - 要包装的swan对象
+ * @return {Promise|Array} - 包装后的swan-api对象
+ */
+export const getApiWrappers = (swan, rules) => {
+    if (Object.prototype.toString.call(rules) === '[object Array]') {
+        return rules.map(rule => getApiWrappers(swan, rule));
+    }
+    return new Promise((resolve, reject) => {
+        if (typeof rules === 'string') {
+            swan[rules]({
+                success: resolve,
+                fail: resolve
+            });
+        }
+        else if (typeof rules === 'function') {
+            resolve(rules());
+        }
+    });
+};

@@ -3,8 +3,8 @@
  * @author houyu(houyu01@baidu.com)
  */
 
-// 预留，节后上线
-// import nextTick from '../../utils/next-tick';
+import logger from '../../utils/log';
+import nextTick from '../../utils/next-tick';
 
 /**
  * 防止在App与page的onShow中调用过多次数的login
@@ -110,6 +110,7 @@ export const apiProccess = (originSwan, {
                 }
             }
         }),
+
         /**
          * 宿主自定义的分享，取代直接的api的分享
          * @param {Object} userParams 调用openShare的小程序开发者传递的param
@@ -130,6 +131,67 @@ export const apiProccess = (originSwan, {
             swaninterface.bind('onUserCaptureScreen', () => {
                 typeof callback === 'function' && callback();
             });
+        },
+
+        /**
+         * 在下一个时间周期运行任务
+         * @param {Function} fn 要运行的任务函数
+         * @param {Object=} thisArg this指向对象
+         */
+        nextTick,
+
+        /**
+         * 向API注入切面
+         *
+         * @param {Array<Object>} [actions] - 所有需要注入的切面列表
+         */
+        sendFrameWorkLog: logger.sendFrameWorkLog.bind(null, swaninterface),
+
+        after: actions => {
+
+            for (let name in actions) {
+
+                let originMethod = originSwan[name];
+
+                if (typeof actions[name] === 'function') {
+                    originSwan[name] = function (...args) {
+                        let returnValue = originMethod.call(originSwan, ...args);
+                        return actions[name].call(this, {
+                            args,
+                            returnValue,
+                            thisObject: originSwan
+                        });
+                    };
+                }
+                else if (typeof actions[name] === 'object') {
+
+                    let {returning, success} = actions[name];
+
+                    originSwan[name] = function (args) {
+
+                        if (success) {
+                            let originSuccess = args.success;
+                            args.success = function (...result) {
+                                originSuccess.call(this, ...result);
+                                success({
+                                    args: result,
+                                    thisObject: originSwan
+                                });
+                            };
+                        }
+
+                        let returnValue = originMethod.call(this, args);
+                        if (returning) {
+                            return returning.call(this, {
+                                args,
+                                returnValue,
+                                thisObject: originSwan
+                            });
+                        }
+                        return returnValue;
+                    };
+                }
+            }
         }
     });
 };

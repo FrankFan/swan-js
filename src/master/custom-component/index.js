@@ -3,7 +3,7 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
-import {deepClone, Data, isEqual, convertToCamelCase, callMethodSafty} from '../../utils';
+import {deepClone, Data, isEqual, convertToCamelCase} from '../../utils';
 import {getPropertyVal} from '../../utils/custom-component';
 import {builtInBehaviorsAction} from './inner-behaviors';
 import {componentAttrMergeMethods, behaviorAttrMergeMethods} from './merge-behaviors';
@@ -17,18 +17,18 @@ export default class VirtualComponentFactory {
         this.behaviorsMap = {};
 
         this.swaninterface = swaninterface;
-
-        swanEvents('masterPreloadConstructVirtualComponentFactory');
     }
 
     /**
      * 创建虚拟组件实例的方法
      *
-     * @param {Object} ClassEntity - 组件的类
+     * @param {Object} componentProto - 自定义组件的实体对象
      * @param {Object} instanceProperties - 组件的所有实例化时需要装载的属性
      * @return {Object} 创建出来的自定义组件实例
      */
-    createInstance(ClassEntity, instanceProperties) {
+    createInstance(componentProto, instanceProperties) {
+
+        const componentEntity = {...componentProto};
 
         const initialInstance = {
             ...instanceProperties,
@@ -38,28 +38,28 @@ export default class VirtualComponentFactory {
         // 创建一个自定义组件的句柄实例
         const specialProps = ['data', 'properties'];
 
-        const instance = Object.keys(ClassEntity)
+        const instance = Object.keys(componentEntity)
             .reduce((instance, propName) => {
                 if (!~specialProps.indexOf(propName)) {
-                    instance[propName] = deepClone(ClassEntity[propName]);
+                    instance[propName] = deepClone(componentEntity[propName]);
                 }
                 return instance;
             }, initialInstance);
 
         // 将lifetimes分解到自定义组件实例中
-        const decoratedInstance = this.bindMethodsToInstance(instance, instance.lifetimes);
+        const decoratedInstance = Object.assign(instance, instance.lifetimes);
 
         // 将behaviors分解并merge到自定义组件实例中
-        this.mergeBehaviors(decoratedInstance, decoratedInstance.behaviors, ClassEntity);
+        this.mergeBehaviors(decoratedInstance, decoratedInstance.behaviors, componentEntity);
 
         // 将自定义组件中methods方法集合分解到自定义组件实例中
-        this.bindMethodsToInstance(decoratedInstance, decoratedInstance.methods);
+        Object.assign(decoratedInstance, decoratedInstance.methods);
 
         // 将已merge完成的数据绑定到自定义组件实例中
         this.bindDataToInstance(
             decoratedInstance,
-            ClassEntity.properties,
-            ClassEntity.data,
+            componentEntity.properties,
+            componentEntity.data,
             instanceProperties.data
         );
 
@@ -70,7 +70,7 @@ export default class VirtualComponentFactory {
 
             // 全局样式类处理
             if (decoratedInstance.options
-                && decoratedInstance.options.processGlobalClass
+                && decoratedInstance.options.addGlobalClass
             ) {
                 this.processGlobalClass(decoratedInstance);
             }
@@ -117,12 +117,15 @@ export default class VirtualComponentFactory {
         if (Object.prototype.toString.call(initialInstance.externalClasses) === '[object Array]') {
 
             // 将Component中的externalClasses全部转换成驼峰形式
-            let cameledClassesMap = {};
             const cameledClasses = initialInstance.externalClasses
-                .map(externalClass => {
-                    const className = convertToCamelCase(externalClass)
-                    return cameledClassesMap[className] = className;
-                });
+                .map(externalClass => convertToCamelCase(externalClass));
+
+            // Component中externalClasses与其转换成驼峰命名后的映射
+            const cameledClassesMap = initialInstance.externalClasses
+                .reduce((cameledClassesMap, className) => {
+                    cameledClassesMap[className] = convertToCamelCase(className);
+                    return cameledClassesMap;
+                }, {});
 
             // 挂载在自定义组件具有实际作用的classes
             const availableClassesList = Object.keys(initialInstance.data)
@@ -130,7 +133,7 @@ export default class VirtualComponentFactory {
                 .map(property => initialInstance.data[property]);
 
             // Component中的externalClasses与挂载在自定义组件具有实际作用class的映射
-            const convertedClassesMap = cameledClasses
+            const convertedClassesMap = Object.keys(cameledClassesMap)
                 .reduce((convertedClassesMap, convertedClass) => {
                     convertedClassesMap[convertedClass] = initialInstance
                         .data[cameledClassesMap[convertedClass]];
@@ -154,16 +157,6 @@ export default class VirtualComponentFactory {
                     });
             }
         }
-    }
-
-    /**
-     * 将方法集合分解并merge到自定义组件实例中
-     *
-     * @param {Object} initialInstance - 自定义组件实例
-     * @param {Object} methods         - 待merge的方法集合
-     */
-    bindMethodsToInstance(initialInstance, methods) {
-        return Object.assign(initialInstance, methods);
     }
 
     /**
@@ -237,13 +230,17 @@ export default class VirtualComponentFactory {
                         const oldValue = this[name];
                         if (!isEqual(oldValue, value)) {
                             setTimeout(() => {
-                                if (typeof observer === 'function') {
-                                    observer.call(context, value, oldValue);
-                                }
-                                else if (typeof observer === 'string'
-                                    && typeof context[observer] === 'function'
-                                ) {
-                                    context[observer].call(context, value, oldValue);
+                                try {
+                                    if (typeof observer === 'function') {
+                                        observer.call(context, value, oldValue);
+                                    }
+                                    else if (typeof observer === 'string'
+                                        && typeof context[observer] === 'function'
+                                    ) {
+                                        context[observer].call(context, value, oldValue);
+                                    }
+                                } catch (err) {
+                                    console.error(`execute observer ${observer} callback fail! err: ${err}`);
                                 }
                             }, 0);
                         }
@@ -261,20 +258,23 @@ export default class VirtualComponentFactory {
      *
      * @param {Object} target   - 目标对象
      * @param {Array} behaviors - 需要merge的behaviors的集合
+     * @param {Object} componentEntity - 组件的实体备份对象
      * @return {Object} 已merge完behaviors的目标对象
      */
-    mergeBehaviors(target, behaviors = [], ClassEntity) {
+    mergeBehaviors(target, behaviors = [], componentEntity) {
         const specialProps = ['data', 'properties'];
         behaviors
             .filter(behavior => Object.prototype.toString.call(behavior) === '[object Object]')
             .forEach(behavior => {
                 for (const attribute in behavior) {
                     if (componentAttrMergeMethods[attribute]) {
-                        !~specialProps.indexOf(attribute)
-                        ? target[attribute]
-                            = componentAttrMergeMethods[attribute](target[attribute], behavior[attribute])
-                        : ClassEntity[attribute]
-                            = componentAttrMergeMethods[attribute](ClassEntity[attribute], behavior[attribute]);
+                        if (specialProps.includes(attribute)) {
+                            componentEntity[attribute]
+                                = componentAttrMergeMethods[attribute](componentEntity[attribute], behavior[attribute]);
+                        } else {
+                            target[attribute]
+                                = componentAttrMergeMethods[attribute](target[attribute], behavior[attribute]);
+                        }
                     }
                 }
             });
@@ -429,7 +429,7 @@ export default class VirtualComponentFactory {
     defineBehavior(behaviorProto) {
 
         // 将lifeTimes中融合的生命周期分解到实例中, 便于自定义组件实例只处理已分解的生命周期
-        this.bindMethodsToInstance(behaviorProto, behaviorProto.lifetimes);
+        Object.assign(behaviorProto, behaviorProto.lifetimes);
 
         // behaviors中的自定义组件扩展definitionFilter先行处理
         this.definitionFilterExecutor(behaviorProto, behaviorProto.behaviors);
@@ -537,16 +537,24 @@ export default class VirtualComponentFactory {
 
         const virtualComponentFactory = this;
 
+        const callMethodSafty = (obj, methodName, ...args) => {
+            try {
+                obj[methodName] && obj[methodName](...args);
+            }
+            catch (e) {
+                console.error(e);
+            }
+        };
+
         return {
 
             /**
-             * 获取某一组自定义组件的初始数据，如果组件有递归，则会扁平化
+             * 获取某一组自定义组件的初始数据
              *
              * @param {Array} componentPathSet - 需要获取数据的一组自定义组件
              * @return {Object} 该类组件的数据
              */
             getCustomComponentsData(componentPathSet = [], communicator) {
-
                 const getComponentPath = (componentPathSet = [], visitedPaths = []) => {
                     return componentPathSet.reduce((mergedSet, componentPath) => {
                         if (~visitedPaths.indexOf(componentPath)) {
@@ -591,7 +599,6 @@ export default class VirtualComponentFactory {
             customComponentEvent(params) {
 
                 switch (params.type) {
-
                     case 'customComponent:detached':
                         callMethodSafty(
                             this.privateProperties.customComponents[params.nodeId],

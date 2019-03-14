@@ -7,7 +7,13 @@ import EventsEmitter from '../../utils/events-emitter';
 import SlaveEventsRouter from './slave-events-router';
 import {getPagePrototypeInstance} from './page-prototype';
 import {Data, getParams, Share, deepClone, getAppInfo} from '../../utils';
+
+/**
+ * 页面所有的生命周期相关事件派发器
+ *
+ */
 const pageLifeCycleEventEmitter = new EventsEmitter();
+
 let global = window;
 
 /**
@@ -28,6 +34,20 @@ export const slaveEventInit = master => {
 };
 
 /**
+ * 暴露给用户的 Page 方法
+ *
+ * @param {Object} [pageObj] - 开发者的page原型对象
+ * @return {Object} - 开发者的page原型对象
+ */
+export const Page = pageObj => {
+    const uri = global.__swanRoute;
+    const usingComponents = global.usingComponents || [];
+    const pageProto = {data: {}};
+    global.masterManager.pagesQueue[uri] = {...pageProto, ...pageObj, uri, usingComponents};
+    return global.masterManager.pagesQueue[uri];
+};
+
+/**
  * 初始化页面实例，附带页面原型，页面的创建函数
  *
  * @param {Object} [pageInstance] - 页面实例
@@ -38,7 +58,7 @@ export const slaveEventInit = master => {
  * @param {Object} [appConfig] - 页面配置对象(app.json中的配置内容)
  * @return {Object} - 创建页面实例
  */
-const initUserPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan, appConfig) => {
+const _createPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan, appConfig) => {
     const swaninterface = masterManager.swaninterface;
     const appid = getAppInfo(swaninterface).appid;
     slaveId = '' + slaveId;
@@ -53,13 +73,21 @@ const initUserPageInstance = (pageInstance, slaveId, accessUri, masterManager, g
                 slaveId,
                 accessUri,
                 raw: new Data(pageInstance.data),
-                share: new Share(swaninterface, appid, pageInstance, appConfig.pages[0])
+                hooks: [],
+                share: new Share(swaninterface, appid, pageInstance, '')
             },
             route,
             options: getParams(query)
         },
         pagePrototype
     );
+
+    Page.__hooks.forEach(hook => {
+        if (accessUri.match(hook.url)) {
+            pageInstance.privateProperties.hooks.push(hook);
+        }
+    });
+
     swanEvents('masterActiveInitUserPageInstance', pageInstance);
 
     return pageInstance;
@@ -129,7 +157,7 @@ export const createPageInstance = (accessUri, slaveId, appConfig) => {
     swanEvents('masterActiveGetUserPageInstance');
     // 过滤传过来的originUri,临时方案；后面和生成path做个统一的方法；
     const uriPath = accessUri.split('?')[0];
-    const userPageInstance = initUserPageInstance(
+    return _createPageInstance(
         cloneSwanPageObject(global.masterManager.pagesQueue[uriPath]),
         slaveId,
         accessUri,
@@ -137,7 +165,6 @@ export const createPageInstance = (accessUri, slaveId, appConfig) => {
         global.swan,
         appConfig
     );
-    return userPageInstance;
 };
 
 /**
@@ -152,16 +179,35 @@ export const getCurrentPages = () => {
         );
 };
 
+const normalizeRegx = raw => new RegExp(raw);
+
+Page.__hooks = [];
+
 /**
- * 暴露给用户的 Page 方法
+ * Page的切面注入方法
  *
- * @param {Object} [pageObj] - 开发者的page原型对象
- * @return {Object} - 开发者的page原型对象
+ * @param {Object} options 传入的切面对象
+ * @param {Object} options.methods 传入的切面对象
  */
-export const Page = pageObj => {
-    const uri = global.__swanRoute;
-    const usingComponents = global.usingComponents || [];
-    const pageProto = {data: {}};
-    global.masterManager.pagesQueue[uri] = {...pageProto, ...pageObj, uri, usingComponents};
-    return global.masterManager.pagesQueue[uri];
+Page.after = function (options) {
+
+    const urlRegx = normalizeRegx(options.url || '.*');
+
+    Page.__hooks.push({
+        ...options,
+        url: urlRegx
+    });
+
+    global.masterManager.navigator.history
+        .each(currentSlave => {
+            if (currentSlave.accessUri
+                && currentSlave.accessUri.match(urlRegx)
+                && currentSlave.isCreated()
+            ) {
+                currentSlave.userPageInstance
+                    .privateProperties.hooks.push(options);
+            }
+        }, {
+            recursive: true
+        });
 };

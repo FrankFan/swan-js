@@ -14,10 +14,27 @@ export class Navigator {
         this.history = new History();
         this.swaninterface = swaninterface;
         this.context = context;
+        this.backToHomeEventStatus = false;
     }
     setAppConfig(appConfig) {
         // 第一次从客户端获取到appConfig
         this.appConfig = appConfig;
+    }
+
+    /**
+     * 获取backtohome事件触发标识
+     * @return {boolean} 是否存在
+     */
+    getBackToHomeEventStatus() {
+        return this.backToHomeEventStatus;
+    }
+
+    /**
+     * 设置backtohome事件触发标识
+     * @param {boolean} [value] - 设置的参数
+     */
+    setBackToHomeEventStatus(value) {
+        this.backToHomeEventStatus = value;
     }
 
     /**
@@ -28,7 +45,7 @@ export class Navigator {
         // Route事件监听开启
         this.listenRoute();
 
-        swanEvents('masterActiveCreateInitslave');
+        swanEvents('masterActiveCreateInitSlave');
 
         // 根据appConfig判断时候有appjs拆分逻辑
         // 如果包含splitAppJs字段，且不分包，则为拆分app.js
@@ -42,15 +59,15 @@ export class Navigator {
         // slave的init调用
         this.initSlave
             .init(initParams)
-            .then(initRes => {
-                swanEvents('masterActiveCreateInitslaveEnd');
+            .then(() => {
+                swanEvents('masterActiveCreateInitSlaveEnd');
                 // 入栈
                 this.history.pushHistory(this.initSlave);
-                swanEvents('masterActivePushInitslaveEnd');
+                swanEvents('masterActivePushInitSlaveEnd');
+
                 // 调用slave的onEnqueue生命周期函数
                 this.initSlave.onEnqueue();
-                swanEvents('masterActiveOnqueueInitslave');
-
+                swanEvents('masterActiveOnqueueInitSlave');
             });
     }
 
@@ -115,6 +132,16 @@ export class Navigator {
         return false;
     }
 
+    targetPageOnHide() {
+        const topSlave = this.history.getTopSlaves()[0];
+        topSlave.hide();
+    }
+
+    targetPageOnShow() {
+        const topSlave = this.history.getTopSlaves()[0];
+        topSlave.show();
+    }
+
     /**
      * 跳转到下一页的方法
      *
@@ -132,9 +159,21 @@ export class Navigator {
             appConfig,
             swaninterface
         });
+        const currentSlaveId = this.history.getCurrentSlaveId();
+        const isPageLifeCycleRuning = this.history.seek(currentSlaveId).getLoadToReadyStatus();
+        if (!isPageLifeCycleRuning) {
+            return this.newSlaveOpen(newSlave, params);
+        }
+        this.context.masterManager.pageLifeCycleEventEmitter.onMessage('rendered', () => {
+            return this.newSlaveOpen(newSlave, params);
+        }, {once: true});
+    }
+
+    newSlaveOpen(newSlave, params) {
         // TODO: openinit openNext 判断有问题
         return newSlave.open(params)
             .then(res => {
+                this.targetPageOnHide();
                 const slaveId = res.wvID;
                 // navigateTo的第一步，将slave完全实例化
                 newSlave.setSlaveId(slaveId);
@@ -156,6 +195,19 @@ export class Navigator {
     redirectTo(params) {
         params.url = this.resolvePathByTopSlave(params.url);
         this.preCheckPageExist(params.url);
+        const currentSlaveId = this.history.getCurrentSlaveId();
+        const isOnloadToShow = this.history.seek(currentSlaveId).getOnloadToShowStatus();
+        if (!isOnloadToShow) {
+            return this.targetPageResolve(params);
+        }
+        this.history.seek(currentSlaveId).jumpOnReady();
+        this.context.masterManager.pageLifeCycleEventEmitter.onMessage('onShowed', () => {
+            this.history.seek(currentSlaveId).unWrapOnLoadToShow();
+            this.history.seek(currentSlaveId).restoreOnReady();
+            return this.targetPageResolve(params);
+        }, {once: true});
+    }
+    targetPageResolve(params) {
         return this.history.historyStack.filter(slave =>
         !slave.isClosing)[this.history.historyStack.length - 1].redirect(params)
         .catch(console.log);
@@ -172,27 +224,41 @@ export class Navigator {
     }
     switchTab(params) {
         params.url = this.resolvePathByTopSlave(params.url);
+        this.history.popTo(this.initSlave.getSlaveId());
         return this.initSlave
             .switchTab(params)
             .then(res => {
-                this.history.popTo(this.initSlave.getSlaveId());
                 return res;
             });
     }
     reLaunch(params = {}) {
+        const currentSlaveId = this.history.getCurrentSlaveId();
+        const isOnloadToShow = this.history.seek(currentSlaveId).getOnloadToShowStatus();
+        if (!isOnloadToShow) {
+            return this.reLaunchPageInstance(params);
+        }
+        this.history.seek(currentSlaveId).jumpOnReady();
+        this.context.masterManager.pageLifeCycleEventEmitter.onMessage('onShowed', () => {
+            this.history.seek(currentSlaveId).unWrapOnLoadToShow();
+            this.history.seek(currentSlaveId).restoreOnReady();
+            return this.reLaunchPageInstance(params);
+        }, {once: true});
+    }
+
+    reLaunchPageInstance(params) {
         if (!params.url) {
             const topSlave = this.history.getTopSlaves()[0];
             params.url = topSlave.getFrontUri();
         }
         params.url = this.resolvePathByTopSlave(params.url);
         const targetSlave = this.getSlaveEnsure(params.url, true);
-        return targetSlave
-            .reLaunch(params)
+        this.targetPageOnHide();
+        // reluanch的第一步，先把栈清空
+        this.history.clear();
+        return targetSlave.reLaunch(params)
             .then(res => {
                 const slaveId = res.wvID;
                 this.initSlave = targetSlave;
-                // reluanch的第一步，先把栈清空
-                this.history.clear();
                 // 然后重新入栈当前重新生成的slave
                 this.history.pushHistory(targetSlave);
                 // 调用重新入栈的生命周期方法
@@ -218,7 +284,9 @@ export class Navigator {
     onreLaunch(fromId, toId) {}
     onnavigateBack(fromId, toId) {
         // 弹出delta个slave并挨个执行其close方法
+        this.targetPageOnHide();
         this.history.popTo(toId);
+        this.targetPageOnShow();
     }
     onswitchTab(fromId, toId, toPage, toTabIndex) {
         this.initSlave

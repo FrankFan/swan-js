@@ -27,7 +27,7 @@ const commonAttrMergeMethods = {
                 return pageLifetimeMap;
             }, {});
     }
-}
+};
 
 // 在Component构造器中merge其他Behavior的方法
 export const componentAttrMergeMethods = {
@@ -39,7 +39,7 @@ export const componentAttrMergeMethods = {
         return ({...newMethods, ...oldMethods});
     },
     ...commonAttrMergeMethods
-}
+};
 
 // 在Behavior构造器中merge其他Behavior的方法
 export const behaviorAttrMergeMethods = {

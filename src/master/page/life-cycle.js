@@ -4,6 +4,8 @@
  */
 import swanEvents from '../../utils/swan-events';
 
+import {renderHookEnqueue} from '../../utils/firstRenderHookQueue';
+
 const customComponentPageLifetimes = ['onShow', 'onHide'];
 
 /**
@@ -63,6 +65,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - 页面onLoad的参数
      */
+    @renderHookEnqueue
     _onLoad(params) {
         try {
             this.onLoad && this.onLoad(params);
@@ -80,6 +83,7 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - 页面onReady的参数
      *
      */
+    @renderHookEnqueue
     _onReady(params) {
         try {
             this.onReady && this.onReady(params);
@@ -96,6 +100,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - onShow生命周期的参数
      */
+    @renderHookEnqueue
     _onShow(params) {
         try {
             this._sendPageLifeCycleMessage('onPreShow', params);
@@ -117,6 +122,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - onHide生命周期的参数
      */
+    @renderHookEnqueue
     _onHide(params) {
         this.onHide && this.onHide(params);
         customComponentLifeCycleExecutor(this, 'onHide', params);
@@ -128,9 +134,9 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - onUnload的生命周期参数
      */
+    @renderHookEnqueue
     _onUnload(params) {
         this.onUnload && this.onUnload(params);
-        this._onHide();
         customComponentLifeCycleExecutor(this, 'onUnload', params);
         this._sendPageLifeCycleMessage('onUnload', params);
     },
@@ -156,6 +162,7 @@ const lifeCyclePrototype = {
         this._sendPageLifeCycleMessage('onPullDownRefresh', params);
     },
 
+    @renderHookEnqueue
     _onTabItemTap(params) {
         const proccessedParams = [].concat(params)[0];
         this.onTabItemTap && this.onTabItemTap(proccessedParams);
@@ -191,24 +198,42 @@ const lifeCyclePrototype = {
      * @param {Object} [e] - 发生事件的参数
      */
     _sendPageLifeCycleMessage(eventName, e = {}) {
+
+        let params = {
+            e,
+            eventName,
+            slaveId: this.privateProperties.slaveId,
+            accessUri: this.privateProperties.accessUri
+        };
+
         this._pageLifeCycleEventEmitter.fireMessage({
             type: 'PagelifeCycle',
-            params: {
-                eventName,
-                slaveId: this.privateProperties.slaveId,
-                accessUri: this.privateProperties.accessUri,
-                e
+            params
+        });
+
+        let returnValue = null;
+
+        this.privateProperties.hooks.forEach(hook => {
+            if (this.privateProperties.accessUri.match(hook.url)
+                && (hook.methods && hook.methods[eventName])
+            ) {
+                returnValue = hook.methods[eventName]({
+                    returnValue,
+                    args: params,
+                    thisObject: this
+                });
             }
         });
     }
 };
 
+
 /**
  * Page中的生命周期
+ * @param {Object} [mastermanager] - masterManager对象
  * @param {Object} [pagePrototype] - Page的prototype
- * @param {Object} [swaninterface] - swaninterface
  * @param {Object} [pageLifeCycleEventEmitter] - 页面生命周期的事件流对象
- * @return merge后的Page的prototype
+ * @return {Object} merge后的Page的prototype
  */
 export const initLifeCycle = (mastermanager, pagePrototype, pageLifeCycleEventEmitter) => {
     const swaninterface = mastermanager.swaninterface;
@@ -216,4 +241,5 @@ export const initLifeCycle = (mastermanager, pagePrototype, pageLifeCycleEventEm
         _pageLifeCycleEventEmitter: pageLifeCycleEventEmitter
     });
 };
+
 /* eslint-enable fecs-camelcase */
