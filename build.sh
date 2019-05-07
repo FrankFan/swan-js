@@ -1,3 +1,4 @@
+
 npm install --registry http://registry.npm.baidu-int.com
 npm run build
 mkdir -p ./output/dist/box/
