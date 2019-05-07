@@ -6,7 +6,7 @@
 import swanEvents from '../../utils/swan-events';
 import Slave from '../navigator/slave';
 import TabSlave from '../navigator/tab-slave';
-
+console.log('----')
 /**
  * slave的事件封装分发器，封装了大量的无逻辑公有方法
  *
@@ -29,6 +29,7 @@ export default class SlaveEventsRouter {
         this.bindPrivateEvents();
         this.bindDeveloperEvents();
         this.bindEnvironmentEvents();
+        this.bindSlaveEvent();
         this.bindLifeCycleEvent(this.pageLifeCycleEventEmitter);
     }
 
@@ -99,18 +100,9 @@ export default class SlaveEventsRouter {
                         {},
                         event.value.params
                     );
-                    this.history.seek(currentSlaveId).unWrapLoadToReady();
-                    this.renderedNotice(this.pageLifeCycleEventEmitter, 'rendered');
                 }
             });
         }, {listenPreviousEvent: true});
-    }
-
-    pageToShow(callMethod) {
-        this.masterManager.lifeCycleEventEmitter.onMessage(callMethod, event => {
-            const currentSlaveId = this.history.getCurrentSlaveId();
-            this.callPageMethod(currentSlaveId, `_${callMethod}`, {});
-        });
     }
 
     /**
@@ -142,31 +134,43 @@ export default class SlaveEventsRouter {
      */
     bindDeveloperEvents() {
         this.slaveCommunicator.onMessage('event', event => {
-            const eventOccurredPageObject = this.history.seek(event.slaveId).getUserPageInstance();
+            console.log('event::::',event)
+            const currentSlave = this.history.seek(event.slaveId);
+            if (currentSlave && typeof currentSlave.getUserPageInstance === 'function') {
 
-            if (event.customEventParams) {
-                eventOccurredPageObject.privateMethod
-                    .callComponentMethod.call(
-                        eventOccurredPageObject,
-                        event.customEventParams.nodeId,
-                        event.value.reflectMethod
-                    );
-            }
-            else if (eventOccurredPageObject[event.value.reflectMethod]) {
-                eventOccurredPageObject.privateMethod
-                    .callMethod.call(
-                        eventOccurredPageObject,
-                        event.value.reflectMethod,
-                        event.value
-                    );
+                const eventOccurredPageObject = currentSlave.getUserPageInstance();
+                if (event.customEventParams) {
+                    eventOccurredPageObject.privateMethod
+                        .callComponentMethod.call(
+                            eventOccurredPageObject,
+                            event.customEventParams.nodeId,
+                            event.value
+                        );
+                }
+                else {
+                    eventOccurredPageObject.privateMethod
+                        .callMethod.call(
+                            eventOccurredPageObject,
+                            event.value.reflectMethod,
+                            event.value
+                        );
+                }
             }
         });
     }
 
     /**
+     * slave的事件代理
+     */
+    bindSlaveEvent() {
+        this.slaveCommunicator.onMessage('proxyTap', event => {
+            console.log('proxy::::', event)
+            
+        });
+    }
+    /**
      * 客户端触发的协议事件，非前端派发
      * 用于接收协议事件
-     *
      */
     bindEnvironmentEvents() {
         this.masterManager.swaninterface
@@ -185,29 +189,18 @@ export default class SlaveEventsRouter {
                 else if (topSlave instanceof TabSlave) {
                     currentSlaveUrl = topSlave.children[topSlave.currentIndex].accessUri;
                 }
-
                 if (from === 'relaunch') {
                     swanEvents('masterOnNewScheme');
                 }
-
                 if (from !== 'menu' && currentSlaveUrl ===  url) {
                     from === 'relaunch' && swanEvents('masterFePageShow');
                     return;
                 }
-                this.masterManager.navigator.setBackToHomeEventStatus(true);
                 this.masterManager.navigator.reLaunch({url: `/${url}`});
             });
     }
 
-    renderedNotice(pageLifeCycleEventEmitter, type) {
-        pageLifeCycleEventEmitter.fireMessage({
-            type
-        });
-    }
-
     bindLifeCycleEvent(pageLifeCycleEventEmitter) {
-
-        const pageEventsToLifeCycle = ['onHide', 'onTabItemTap'];
         // 需要稍后补执行的操作集合
         let backPageEventToLifeCycles = {
             onTabItemTap: Object.create(null)
@@ -218,21 +211,39 @@ export default class SlaveEventsRouter {
             if (Object.prototype.toString.call(events) !== '[object Array]') {
                 events = [events];
             }
+            // 对于客户端事件做一次中转，因为前端有特殊逻辑处理(onShow必须在onLoad之后)
             const detectOnShow = event => {
-                if (event.params.eventName === 'onShow') {
-                    const excuteOnReady = this.history.seek(event.params.slaveId).getOnReadyStatus();
-                    if (event.params.e.firstInvoke && excuteOnReady) {
-                        this.emitPageRender(event.params.slaveId);
-                    } else if (!excuteOnReady) {
-                        this.renderedNotice(pageLifeCycleEventEmitter, 'onShowed');
-                    }
+                if (event.params.eventName === 'onLoad') {
+                    this.masterManager.lifeCycleEventEmitter
+                        .onMessage('onShow' + event.params.slaveId, paramsQueue => {
+
+                            // 筛选出本次的onShow的对应参数
+                            paramsQueue = [].concat(paramsQueue);
+
+                            // onshow对应的slave
+                            const showedSlave = paramsQueue.filter(params => {
+                                return +params.event.wvID === +event.params.slaveId;
+                            }).slice(-1);
+
+                            // 获取对象中的event
+                            const e = showedSlave[0].event;
+
+                            // 执行对应slave的onShow
+                            this.callPageMethod(event.params.slaveId, '_onShow', {}, e);
+
+                        }, {listenPreviousEvent: true});
+
+                    // 避免同一个slave二次触发onReady
+                    this.masterManager.lifeCycleEventEmitter
+                        .onMessage('onShow' + event.params.slaveId, paramsQueue => {
+                            // 触发页面的onRender逻辑
+                            this.emitPageRender(event.params.slaveId);
+                        }, {listenPreviousEvent: true, once: true});
                 }
-                this.masterManager.navigator.setBackToHomeEventStatus(false);
             };
             events.forEach(detectOnShow);
-        });
-        this.pageToShow('onShow');
-        this.pageToShow('onHide');
+        }, {listenPreviousEvent: true});
+
         pageLifeCycleEventEmitter.onMessage('onTabItemTap', ({event, from}) => {
             let wvID = event.wvID;
             // 客户端触发onTabItemTap先于switchtab
@@ -255,6 +266,11 @@ export default class SlaveEventsRouter {
                 // 保存后续调用。 android对于新页面没有传wvID，所以根据index+pagePath进行统一保证
                 backPageEventToLifeCycles.onTabItemTap[event.index + event.pagePath] = event;
             }
+        }, {listenPreviousEvent: true});
+
+        this.masterManager.lifeCycleEventEmitter.onMessage('onHide', e => {
+            let event = e.event;
+            this.callPageMethod(event.wvID, '_onHide', {}, event);
         }, {listenPreviousEvent: true});
 
         this.masterManager.swaninterface

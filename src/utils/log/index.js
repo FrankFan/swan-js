@@ -2,8 +2,9 @@
  * @file 小程序打印框架级日志
  * @author houyu(houyu01@baidu.com)
  */
-import {getApiWrappers} from '../code-process';
+import uuid from './uuid';
 import {paramSplit, noop} from '../index';
+import {getApiWrappers} from '../code-process';
 
 const LOG_ADRESS = 'https://pimlog.baidu.com/mapp/advlog';
 
@@ -52,6 +53,7 @@ export default {
             ENV_VARIABLES.scheme = 'baiduboxapp';
         }
 
+
         Promise
             .all(getLogDependencies(swaninterface))
             .then(([systemInfo, commonSysInfo, networkInfo, loc, appInfo]) => {
@@ -84,7 +86,7 @@ export default {
                         containerAppName: systemInfo.host,
                         scheme: ENV_VARIABLES.scheme,
                         appVersion: hostVersion,
-                        uuid: commonSysInfo.cuid,
+                        uuid: appInfo.cuid,
                         net: networkInfo.networkType,
                         location: {
                             accuracy: loc.accuracy,
@@ -100,7 +102,7 @@ export default {
                         swanType: 'swan',
                         groupId: publicParams.groupId,
                         bizId: publicParams.bizId,
-                        logid: 1,
+                        logid: uuid(),
                         eventName: publicParams.eventName,
                         eventType: '0',
                         timestamp: +new Date,
@@ -113,6 +115,9 @@ export default {
                     success: publicParams.success || noop,
                     fail: publicParams.fail || noop
                 });
+            })
+            .catch(function (e) {
+                console.log('打印日志时获取信息失败', e);
             });
     }
 };

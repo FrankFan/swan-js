@@ -10,11 +10,13 @@ export default class Communicator extends EventsEmitter {
         this.swaninterface = swaninterface;
         this.listen(options);
     }
+
     listen(options) {
-        return this.swaninterface.invoke('onMessage', (...args) => {
-            this.fireMessage(...args);
+        return this.swaninterface.invoke('onMessage', params => {
+            this.fireMessage(params, {once: params.isStoreData});
         }, options);
     }
+
     sendMessage(slaveId, message = {}) {
         if (!message.type) {
             return Promise.reject({message: 'error'});

@@ -25,7 +25,6 @@ export default class Loader {
                     action && swanEvents(action);
                 } catch (e) {
                     reject(e);
-                    console.error(e);
                 }
                 resolve();
             } else {
@@ -44,7 +43,7 @@ export default class Loader {
     }
     loadcss(src, action, attrArray = []) {
         const loadPath = this.basePath + src;
-        if (this.loadedResource.js[loadPath]) {
+        if (this.loadedResource.css[loadPath]) {
             return Promise.resolve();
         }
         return new Promise((resolve, reject) => {

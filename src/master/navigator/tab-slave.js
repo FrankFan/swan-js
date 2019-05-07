@@ -106,7 +106,7 @@ export default class TabSlave {
     reLaunch(paramsObj) {
         this.setToIndex(paramsObj.url);
         this.children = this.constructMySlave();
-        return this.getCurrentChildren().reLaunch(paramsObj);
+        return this.findChild(paramsObj.url).reLaunch(paramsObj);
     }
 
     setToIndex(uri) {
@@ -126,9 +126,6 @@ export default class TabSlave {
         // 解决多个tab配置同一个页面case。先通过slaveId找，没找到则通过tab下标找
         let toChild = this.findChild(toId);
         let webviewIndex;
-        if (this.isTheSlave(fromId)) {
-            this.getCurrentChildren().hide();
-        }
         if (!toChild) {
             // 开发者工具暂时没传toTabIndex，走老逻辑通过url找页面
             if (toTabIndex === undefined) {
@@ -139,14 +136,13 @@ export default class TabSlave {
                 toChild = this.children[toTabIndex];
                 webviewIndex = toTabIndex;
             }
+
         }
         else {
             webviewIndex = this.getIndexBySlaveId(toId);
-            if (!toChild.getLoadToReadyStatus()) {
-                toChild.show();
-            }
         }
         this.setCurrentIndex(webviewIndex);
+
         // 触发被切换到的slave的onEnqueue
         return toChild.setSlaveId(toId).onEnqueue()
             .then(() => {
@@ -183,13 +179,5 @@ export default class TabSlave {
     
     onEnqueue(params) {
         return this.getCurrentChildren().onEnqueue(params);
-    }
-
-    hide() {
-        return this.getCurrentChildren().hide();
-    }
-
-    show() {
-        return this.getCurrentChildren().show();
     }
 }

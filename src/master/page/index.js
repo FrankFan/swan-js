@@ -58,7 +58,7 @@ export const Page = pageObj => {
  * @param {Object} [appConfig] - 页面配置对象(app.json中的配置内容)
  * @return {Object} - 创建页面实例
  */
-const _createPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan, appConfig) => {
+const _createPageInstance = (pageInstance, slaveId, accessUri, masterManager, globalSwan) => {
     const swaninterface = masterManager.swaninterface;
     const appid = getAppInfo(swaninterface).appid;
     slaveId = '' + slaveId;

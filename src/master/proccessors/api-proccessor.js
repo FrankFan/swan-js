@@ -4,6 +4,7 @@
  */
 
 import logger from '../../utils/log';
+import {noop} from '../../utils';
 import nextTick from '../../utils/next-tick';
 
 /**
@@ -82,11 +83,17 @@ export const apiProccess = (originSwan, {
 }) => {
     const getSlaveId = () => navigator.history.getTopSlaves()[0].getSlaveId();
     const operators = swanComponents.getContextOperators(swaninterface, communicator, getSlaveId);
+
     return Object.assign(originSwan, {
+
         navigateTo: navigator.navigateTo.bind(navigator),
+
         navigateBack: navigator.navigateBack.bind(navigator),
+
         redirectTo: navigator.redirectTo.bind(navigator),
+
         switchTab: navigator.switchTab.bind(navigator),
+
         reLaunch: navigator.reLaunch.bind(navigator),
 
         /**
@@ -108,6 +115,14 @@ export const apiProccess = (originSwan, {
                     reportName,
                     reportParams
                 }
+            }
+        }),
+
+        setPageInfo: params => swanEventsCommunicator.fireMessage({
+            type: 'SwanEvents',
+            params: {
+                eventName: 'setPageInfo',
+                e: params
             }
         }),
 
@@ -145,7 +160,9 @@ export const apiProccess = (originSwan, {
          *
          * @param {Array<Object>} [actions] - 所有需要注入的切面列表
          */
-        sendFrameWorkLog: logger.sendFrameWorkLog.bind(null, swaninterface),
+        sendFrameWorkLog: logger.sendFrameWorkLog.bind(null, swaninterface, {
+            request: originSwan.request
+        }),
 
         after: actions => {
 
@@ -170,7 +187,7 @@ export const apiProccess = (originSwan, {
                     originSwan[name] = function (args) {
 
                         if (success) {
-                            let originSuccess = args.success;
+                            let originSuccess = args.success || noop;
                             args.success = function (...result) {
                                 originSuccess.call(this, ...result);
                                 success({

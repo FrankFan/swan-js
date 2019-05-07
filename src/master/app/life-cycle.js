@@ -3,6 +3,7 @@
  * @author houyu(houyu01@baidu.com)
  */
 import {processParam} from '../../utils/index';
+import swanEvents from '../../utils/swan-events';
 
 import {renderHookEnqueue} from '../../utils/firstRenderHookQueue';
 
@@ -52,7 +53,6 @@ const lifeCyclePrototype = {
         return result;
     },
 
-
     /**
      * 向事件流中发送生命周期消息
      *
@@ -75,13 +75,15 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - appLaunch的生命周期函数
      */
     _onAppLaunch(params) {
+        processParam(params.appInfo);
+        swanEvents('masterOnAppLaunchHookStart');
         try {
-            processParam(params.appInfo);
             this.onLaunch && this.onLaunch(this._lifeCycleParamsHandle(params));
         }
         catch (e) {
             console.error(e);
         }
+        swanEvents('masterOnAppLaunchHookEnd');
         this._sendAppLifeCycleMessage('onLaunch', {
             e: params.appInfo
         });
@@ -92,11 +94,10 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - appShow生命周期参数
      */
-    @renderHookEnqueue
-    _onAppShow(params) {
+    _onAppShow: renderHookEnqueue(function (params) {
+        processParam(params.appInfo);
+        this._sendAppLifeCycleMessage('onPreShow', {e: params.appInfo});
         try {
-            processParam(params.appInfo);
-            this._sendAppLifeCycleMessage('onPreShow', {e: params.appInfo});
             this.onShow && this.onShow(this._onAppShowLifeCycleParamsHandle(params));
         }
         catch (e) {
@@ -105,17 +106,16 @@ const lifeCyclePrototype = {
         this._sendAppLifeCycleMessage('onShow', {
             e: params.appInfo
         });
-    },
+    }, '_onAppShow'),
 
     /**
      * appHide生命周期，在app前后台切换时触发
      *
      * @param {Object} [params] - appHide生命周期参数
      */
-    @renderHookEnqueue
-    _onAppHide(params) {
+    _onAppHide: renderHookEnqueue(function (params) {
+        processParam(params.appInfo);
         try {
-            processParam(params.appInfo);
             this.onHide && this.onHide(this._lifeCycleParamsHandle(params));
         }
         catch (e) {
@@ -124,7 +124,7 @@ const lifeCyclePrototype = {
         this._sendAppLifeCycleMessage('onHide', {
             e: params.appInfo
         });
-    },
+    }, '_onAppHide'),
 
     /**
      * appError生命周期，在app生命周期内，如果发生错误，即触发
@@ -132,7 +132,12 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - appError生命周期的参数
      */
     _onAppError(params) {
-        this.onError && this.onError(params.event);
+        try {
+            this.onError && this.onError(params.event);
+        }
+        catch (e) {
+            console.error(e);
+        }
         this._sendAppLifeCycleMessage('onError', {
             e: params.appInfo
         });
@@ -144,10 +149,17 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - appError生命周期的参数
      */
     _onPageNotFound(params) {
-        !this._hasNotFoundRedirect
-        && this.onPageNotFound
-        && this.onPageNotFound(params.event)
-        && (this._hasNotFoundRedirect = true);
+        if (this._hasNotFoundRedirect || !this.onPageNotFound) {
+            return;
+        }
+
+        try {
+            this.onPageNotFound(params.event);
+        } catch (e) {
+            console.error(e);
+        }
+
+        this._hasNotFoundRedirect = true;
         this._sendAppLifeCycleMessage('onPageNotFound', {
             e: params.appInfo
         });
@@ -159,7 +171,12 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - 登录后的用户信息
      */
     _onLogin(params) {
-        this.onLogin && this.onLogin(params.event.loginMsg);
+        try {
+            this.onLogin && this.onLogin(params.event.loginMsg);
+        }
+        catch (e) {
+            console.error(e);
+        }
         this._sendAppLifeCycleMessage('onLogin', {
             e: params.appInfo
         });

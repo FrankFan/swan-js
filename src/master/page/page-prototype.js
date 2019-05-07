@@ -7,6 +7,10 @@ import {builtInBehaviorsAction} from '../custom-component/inner-behaviors';
 
 const noop = () => {};
 const SETDATA_THROTTLE_TIME = 10;
+
+
+
+
 /**
  * 创建一个用户的page对象的原型单例
  * @param {Object} [masterManager] masterManager底层接口方法
@@ -41,6 +45,7 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             const setObject = typeof path === 'object' ? path : {
                 [path]: value
             };
+
             cb = typeof cb === 'function' ? cb : noop;
             const callback = typeof value === 'function' ? value : cb;  
             const pageUpdateStart = Date.now() + '';
@@ -80,8 +85,12 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             }
             this.nextTick(callback);
         },
+
         sendMessageToCurSlave(message) {
-            masterManager.communicator.sendMessage(this.privateProperties.slaveId, message);
+            masterManager.communicator.sendMessage(this.privateProperties.slaveId, {
+                ...message,
+                isStoreData: true
+            });
         },
 
         /**
@@ -156,6 +165,18 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                 .onMessage(`nextTick:${this.privateProperties.slaveId}`, () => fn(), {
                     once: true
                 });
+        },
+
+        /**
+         * 实例调用自己的方法
+         *
+         * @param {string} method - 调用的方法
+         * @param {*} args - 传入的参数
+         */
+        callMethods(method, args) {
+            if (typeof this[method] === 'function') {
+                this[method](args);
+            }
         },
 
         /**
@@ -281,7 +302,9 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                     type: `nextTick:${this.privateProperties.slaveId}`
                 });
             },
-
+            customEventsMap(params) {
+                this.privateProperties.customEventMap = params.eventParams.customEventMap;
+            },
             /**
              * 向slave中发送message
              *
@@ -343,15 +366,15 @@ export const createPagePrototype = (masterManager, globalSwan) => {
              * 调用当前页面的自定义组件上定义的方法
              *
              * @param {string} nodeId 自定义组件的id
-             * @param {string} methodName 自定义组件上反射调用的方法名
              * @param {Object} eventValue 发生的事件对象
              */
-            callComponentMethod(nodeId, methodName, eventValue) {
+
+            callComponentMethod(nodeId, eventValue) {
                 const reflectComponent = this.privateProperties.customComponents[nodeId];
                 if (reflectComponent
-                    && reflectComponent[event.value.reflectMethod]
+                    && reflectComponent[eventValue.reflectMethod]
                 ) {
-                    reflectComponent[event.value.reflectMethod]
+                    reflectComponent[eventValue.reflectMethod]
                         .call(reflectComponent, eventValue.e);
                 }
                 else {
@@ -359,6 +382,91 @@ export const createPagePrototype = (masterManager, globalSwan) => {
                 }
             },
 
+            /**
+             * 根据传递的值推算出元素的属性
+             *
+             * @param {Object} target 元素的结构化对象
+             * @return {Object} 元素的所有属性
+             */
+            getAttributes(target) {
+                const dataset = target.dataset;
+                let attributes = {};
+
+                for (let name in dataset) {
+                    attributes[`data-${name}`] = dataset[name];
+                }
+                attributes['id'] = target.id;
+                return attributes;
+            },
+
+            matchAttribute(eventKey) {
+                let dataAttributeExpression = /\[([^=]*?)(=['"]([^=]*?)['"])?\]:(.*?)$/g
+                        .exec(eventKey);
+                if (dataAttributeExpression) {
+                    return {
+                        type: 'data',
+                        expression: dataAttributeExpression
+                    }
+                }
+
+                let allAttributeExpression = /\*:(.*?)$/g.exec(eventKey);
+                if (allAttributeExpression){
+                    return {
+                        type: '*',
+                        expression: dataAttributeExpression
+                    }
+                }
+            },
+
+            handleHooksEvents(eventValue) {
+                let returnValue = null;
+                console.log(this.privateProperties.hooks)
+                // 遍历所有的eventhook
+                this.privateProperties.hooks
+                    .forEach(hook => {
+                        for (let eventKey in hook.events) {
+
+                            console.log(eventKey);
+                            // 使当前的hook匹配既定规则
+                            let matched = this.privateMethod.matchAttribute(eventKey);
+
+                            // 当前匹配了data-规则
+                            if (matched.type == 'data') {
+                                console.log("matched", matched)
+                                const [, attributeKey, , attributeValue, eventType] = matched.expression;
+                                const processedKey = attributeKey
+                                    .replace(/(data-)(.*)$/, (all, prefix, suffix) => {
+                                        return prefix + suffix
+                                            .replace(/-(\w)/, (all, word) => word.toUpperCase());
+                                    });
+
+                                // 寻找元素节点的dataset
+                                const attributes = this.privateMethod.getAttributes(eventValue.e.currentTarget);
+                                for (let name in attributes) {
+                                    // 寻找映射的method
+                                    if (processedKey === name &&
+                                        (attributeValue === attributes[name] ||
+                                            attributeValue === undefined) &&
+                                        eventValue.eventType === eventType
+                                    ) {
+                                        console.log('find event', eventValue)
+                                        returnValue = hook.events[eventKey]({
+                                            target: eventValue.e.currentTarget,
+                                            thisObject: this,
+                                            args: eventValue.e
+                                        });
+                                    }
+                                }
+                            }
+
+                            // 当前匹配了*规则
+                            if (matched.type == '*'){
+                                console.log("matched", matched)
+                            }
+                        }
+                    });
+            },
+            
             /**
              * 调用当前页面上的方法
              *
@@ -368,56 +476,10 @@ export const createPagePrototype = (masterManager, globalSwan) => {
             callMethod(methodName, eventValue) {
 
                 // 调用Page对象上的同名方法
-                this[methodName](eventValue.e);
-
-                /**
-                 * 根据传递的值推算出元素的属性
-                 *
-                 * @param {Object} target 元素的结构化对象
-                 * @return {Object} 元素的所有属性
-                 */
-                const getAttributes = target => {
-                    const dataset = target.dataset;
-                    let attributes = {};
-
-                    for (let name in dataset) {
-                        attributes[`data-${name}`] = dataset[name];
-                    }
-                    attributes['id'] = target.id;
-                    return attributes;
-                };
-
-                let returnValue = null;
-
-                this.privateProperties.hooks
-                    .forEach(hook => {
-                        for (let eventKey in hook.events) {
-                            const attributeExpression = /\[([^=]*?)(=['"]([^=]*?)['"])?\]:(.*?)$/g
-                                .exec(eventKey);
-                            if (attributeExpression) {
-                                const [, attributeKey, , attributeValue, eventType] = attributeExpression;
-                                const processedKey = attributeKey
-                                    .replace(/(data-)(.*)$/, (all, prefix, suffix) => {
-                                        return prefix + suffix
-                                            .replace(/-(\w)/, (all, word) => word.toUpperCase());
-                                    });
-                                const attributes = getAttributes(eventValue.e.currentTarget);
-                                for (let name in attributes) {
-                                    if (processedKey === name
-                                        && (attributeValue === attributes[name]
-                                            || attributeValue === undefined)
-                                        && eventValue.eventType === eventType
-                                    ) {
-                                        returnValue = hook.events[eventKey]({
-                                            target: eventValue.e.currentTarget,
-                                            thisObject: this,
-                                            args: eventValue.e
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    });
+                if (typeof this[methodName] === 'function') {
+                    this[methodName](eventValue.e);
+                }
+                this.privateMethod.handleHooksEvents.call(this, eventValue);
             },
 
             ...masterManager.virtualComponentFactory.getCustomComponentMethods(),
@@ -431,7 +493,7 @@ let pagePrototype = null;
 export const getPagePrototypeInstance = (masterManager, globalSwan, pageLifeCycleEventEmitter) => {
     if (!pagePrototype) {
         pagePrototype = createPagePrototype(masterManager, globalSwan);
-        initLifeCycle(masterManager, pagePrototype, pageLifeCycleEventEmitter);
+        initLifeCycle(pagePrototype, pageLifeCycleEventEmitter);
     }
     return pagePrototype;
 };

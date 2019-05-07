@@ -18,20 +18,25 @@ import {getAppInfo} from '../../utils';
 const bindLifeCycleEvent = (appObject, swaninterface, lifeCycleEventEmitter) => {
     const appEventsToLifeCycle = ['onAppShow', 'onAppHide', 'onAppError', 'onPageNotFound'];
 
+    const messageHandler = (appObject, messages) => {
+        // 筛选出本次的onShow的对应参数
+        let event = messages[0] ? messages[0].event : messages.event;
+        if (appObject[`_${event.lcType}`]) {
+            appObject[`_${event.lcType}`]({
+                event,
+                appInfo: getAppInfo(swaninterface, true),
+                type: event.lcType
+            });
+        }
+    };
     appEventsToLifeCycle.forEach(eventName => {
-        lifeCycleEventEmitter.onMessage(eventName, messages => {
-            // 筛选出本次的onShow的对应参数
-            let event = messages[0] ? messages[0].event : messages.event;
-            if (appObject[`_${event.lcType}`]) {
-                appObject[`_${event.lcType}`]({
-                    event,
-                    appInfo: getAppInfo(swaninterface, true),
-                    type: event.lcType
-                });
+        lifeCycleEventEmitter.onMessage(
+            eventName,
+            messages => messageHandler(appObject, messages),
+            {
+                listenPreviousEvent: true
             }
-        }, {
-            listenPreviousEvent: true
-        });
+        );
     });
 
     swaninterface
@@ -81,13 +86,6 @@ export const getAppMethods = (swaninterface, appLifeCycleEventEmitter, lifeCycle
             event: {},
             type: 'onAppLaunch'
         });
-
-        // 触发onAppShow事件
-        initedAppObject._onAppShow({
-            appInfo,
-            event: {},
-            type: 'onAppShow'
-        });
         swanEvents('masterOnAppLaunchHookEnd');
         return initedAppObject;
     };
@@ -129,7 +127,7 @@ export const getAppMethods = (swaninterface, appLifeCycleEventEmitter, lifeCycle
                 let returnValue = null;
                 App._hooks[params.eventName].forEach(method => {
                     returnValue = method({
-                        args: params.e,
+                        args: params.e.e,
                         returnValue,
                         thisObject: initedAppObject
                     });

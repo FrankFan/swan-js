@@ -3,18 +3,88 @@
  * @author houyu(houyu01@baidu.com)
  */
 import san from 'san';
-import {loader} from '../utils';
-import {define, require} from '../utils/module';
+import Extension from '../extension';
 import swanEvents from '../utils/swan-events';
+import {define, require} from '../utils/module';
+import {loader, getABSwitchValue} from '../utils';
 import {getComponentFactory} from './component-factory';
 import {setPageBasePath, isIOS} from '../utils/platform';
-import Extension from '../extension';
+import prefetcher from '../utils/prefetch/prefetch-resource';
+
+const PERFORMANCE_PANEL_SWITCH = 'swanswitch_performance_panel';
+
+/**
+ * 开发者工具加载san-devhook
+ */
+
+function loadHook() {
+    return loader.loadjs('../swan-devhook/slave.js').then(() => {
+        /* eslint-disable fecs-camelcase, no-undef */
+        __san_devtool__.emit('san', san);
+        /* eslint-enable fecs-camelcase, no-undef */
+    });
+}
+
+/**
+ * 向全局变量中注入后续所需的数据和信息
+ * @param {Object} event pageReady事件
+ * @param {Object} context 当前salve对象的context属性
+ * @return {Object} global.pageInfo中的信息，供随后的逻辑调用
+ */
+
+function storeInfoToGlobal(event, context, global) {
+    let ifShowPerformancePanel = getABSwitchValue(PERFORMANCE_PANEL_SWITCH);
+    let advancedInitDataSwitch = false;
+    let initData = event.initData;
+    if (initData) {
+        try {
+            initData = JSON.parse(initData);
+            this.initData = initData;
+        }
+        catch (e) {
+            initData = null;
+        }
+    }
+    if (advancedInitDataSwitch) {
+        global.advancedInitData = this.initData;
+    }
+
+    // 如果性能面板实验开启的话，就向全局变量中注入这个值
+    if (ifShowPerformancePanel === 1) {
+        context.showPerformancePanel = event.showPerformancePanel;
+    }
+
+    const appPath = event.appPath;
+    const pagePath = event.pagePath.split('?')[0];
+    const onReachBottomDistance = event.onReachBottomDistance;
+    const routeId = event.routeId;
+
+    // 给框架同学用的彩蛋
+    const corePath = global.location.href
+        .replace(/[^\/]*\/[^\/]*.html$/g, '')
+        .replace(/^file:\/\//, '');
+    global.debugDev = `deployPath=${appPath}\ncorePath=${corePath}`;
+
+    // 给框架同学使用的刷新彩蛋
+    sessionStorage.setItem('debugInfo', `${appPath}|debug|${pagePath}`);
+
+    // 供组件中拼接绝对路径使用的全局信息
+    global.pageInfo = {
+        appPath,
+        pagePath,
+        routeId,
+        onReachBottomDistance
+    };
+
+    return global.pageInfo;
+}
+
+
 /* globals Bdbox_android_jsbridge */
 
 /**
  * @class slave的入口
  */
-
 export default class Slave {
 
     constructor(global, swaninterface, swanComponents) {
@@ -29,6 +99,8 @@ export default class Slave {
         this.swaninterface = swaninterface;
         this.swanComponents = swanComponents;
         this.openSourceDebugger();
+        this.listenDispatchJSFiles(global);
+        this.userResourcePromise = null;
         this.extension = new Extension(global, swaninterface);
         this.registerComponents();
         this.listenPageReady(global);
@@ -42,26 +114,79 @@ export default class Slave {
     openSourceDebugger() {
         try {
             const {
-                isDebugSdk,
-                ctsServerAddress = {},
+                ctsJsAddress = {},
                 host, // IDE所在pc的host
                 port, // IDE所在pc的port
                 udid
             } = this.context._envVariables;
-            if (!!isDebugSdk) {
-                // 提供使用的udid和所通信pc地址，便于ws连接
-                window._openSourceDebugInfo = {host, port: +port, udid};
-                // cts 性能测试
-                const slaveCtsAddrList = ctsServerAddress.slave;
-                slaveCtsAddrList
-                && Array.isArray(slaveCtsAddrList)
-                && slaveCtsAddrList.forEach(src => {
-                    src.trim() !== '' && loader.loadjs(`${src}?t=${Date.now()}`);
-                });
-            }
+            // 提供使用的udid和所通信pc地址，便于ws连接
+            global._openSourceDebugInfo = {host, port: +port, udid};
+            // 加载cts资源
+            const slaveCtsAddrList = ctsJsAddress.slave;
+            slaveCtsAddrList
+            && Array.isArray(slaveCtsAddrList)
+            && slaveCtsAddrList.forEach(src => {
+                src.trim() !== '' && loader.loadjs(src);
+            });
         } catch (err) {
             return false;
         }
+    }
+
+    /**
+     * 加载开发者代码
+     * @param {string} appPath 小程序在磁盘中的地址
+     * @param {string} pagePath 访问的页面的
+     * @return {Promise}
+     */
+
+    loadUserResource(appPath, pagePath) {
+        // 设置页面的基础路径为当前页面本应所在的路径
+        // 行内样式等使用相对路径变成此值
+        setPageBasePath(`${appPath}/${pagePath}`);
+        swanEvents('slaveActivePageLoadStart');
+        // 加载用户的资源
+        this.userResourcePromise = Promise.all([
+            loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded', [{
+                key: 'linkname',
+                value: 'app'
+            }]),
+            loader.loadcss(`${appPath}/${pagePath}.css`, 'slaveActivePageCssLoaded')
+        ])
+        .catch(() => {
+            console.warn('加载css资源出现问题，请检查css文件');
+        })
+        .then(() => {
+            swanEvents('slaveActiveCssLoaded');
+            swanEvents('slaveActiveSwanJsLoadStart');
+            loader.loadjs(`${appPath}/${pagePath}.swan.js`, 'slaveActiveSwanJsLoaded').then(() => {
+                try {
+                    let pageContentInfo = this.context.require(`${pagePath}.swan`);
+                    this.userResourcePromise = null;
+                    this.userResourceLoaded = true;
+                    this.createAllComponents(pageContentInfo);
+                } catch (e) {
+                    window.errorMsg['execError'] = e;
+                }
+            });
+        });
+    }
+
+    /**
+     * 监听客户端事件，若收到dispatch-js事件，就可以加载开发者代码
+     * @param {Object} [global] 全局对象
+     */
+    listenDispatchJSFiles(global) {
+        this.swaninterface.bind('dispatchJSSlave', event => {
+            if (this.pageReadyTriggered) {
+                return;
+            }
+            let {appPath, pagePath} = storeInfoToGlobal(event, this.context, global);
+
+            (event.devhook === 'true' ? loadHook()
+                .then(() => this.loadUserResource(appPath, pagePath))
+                .catch(this.loadUserResource(appPath, pagePath)) : this.loadUserResource(appPath, pagePath));
+        });
     }
 
     /**
@@ -69,86 +194,44 @@ export default class Slave {
      * @param {Object} [global] 全局对象
      */
     listenPageReady(global) {
-        // 控制是否开启预取initData的开关
-        let advancedInitDataSwitch = false;
-        let that = this;
         this.swaninterface.bind('PageReady', event => {
+            this.pageReadyTriggered = true;
             swanEvents('slaveActiveStart', {
                 pageInitRenderStart: Date.now() + ''
             });
-            let initData = event.initData;
-            if (initData) {
-                try {
-                    initData = JSON.parse(initData);
-                    this.initData = initData;
-                }
-                catch (e) {
-                    initData = null;
-                }
-            }
-            if (advancedInitDataSwitch) {
-                global.advancedInitData = this.initData;
+            let {appPath, pagePath} = storeInfoToGlobal(event, this.context, global);
+            if (this.userResourcePromise || this.userResourceLoaded) {
+                // 重置标记位
+                this.userResourceLoaded = false;
+                return;
             }
 
-            const appPath = event.appPath;
-            const pagePath = event.pagePath.split('?')[0];
-            const onReachBottomDistance = event.onReachBottomDistance;
-
-            // 给框架同学用的彩蛋
-            const corePath = global.location.href
-                .replace(/[^\/]*\/[^\/]*.html$/g, '')
-                .replace(/^file:\/\//, '');
-            global.debugDev = `deployPath=${appPath}\ncorePath=${corePath}`;
-
-            // 给框架同学使用的刷新彩蛋
-            sessionStorage.setItem('debugInfo', `${appPath}|debug|${pagePath}`);
-
-            // 供组件中拼接绝对路径使用的全局信息
-            global.pageInfo = {
-                appPath,
-                pagePath,
-                onReachBottomDistance
-            };
-            let loadHook = () => {
-                return loader.loadjs('../swan-devhook/slave.js').then(() => {
-                    /* eslint-disable fecs-camelcase, no-undef */
-                    __san_devtool__.emit('san', san);
-                    /* eslint-enable fecs-camelcase, no-undef */
-                });
-            };
-
-            let loadUserRes = () => {
-                // 设置页面的基础路径为当前页面本应所在的路径
-                // 行内样式等使用相对路径变成此值
-                setPageBasePath(`${appPath}/${pagePath}`);
-                swanEvents('slaveActivePageLoadStart');
-                // 加载用户的资源
-                Promise.all([
-                    loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded', [{
-                        key: 'linkname',
-                        value: 'app'
-                    }]),
-                    loader.loadcss(`${appPath}/${pagePath}.css`, 'slaveActivePageCssLoaded')
-                ])
-                .catch(() => {
-                    console.warn('加载css资源出现问题，请检查css文件');
-                })
-                .then(() => {
-                    swanEvents('slaveActiveCssLoaded');
-                    swanEvents('slaveActiveSwanJsLoadStart');
-                    loader.loadjs(`${appPath}/${pagePath}.swan.js`, 'slaveActiveSwanJsLoaded').then(() => {
-                        try {
-                            let pageContentInfo = that.context.require(`${pagePath}.swan`);
-                            that.createAllComponents(pageContentInfo);
-                        } catch (e) {
-                            window.errorMsg['execError'] = e;
-                        }
-                    });
-                });
-            };
-            (event.devhook === 'true' ? loadHook().then(loadUserRes).catch(loadUserRes) : loadUserRes());
+            (event.devhook === 'true' ? loadHook()
+                .then(() => this.loadUserResource(appPath, pagePath))
+                .catch(this.loadUserResource(appPath, pagePath)) : this.loadUserResource(appPath, pagePath));
         });
         swanEvents('slavePreloadPageReadyListened');
+    }
+
+    /**
+     * 发送小程序的fmp打点，该打点由内核提供，与page.attach有前后逻辑关系
+     * 由于attach需要调用两次，所以需要一个标记位保证这个函数执行一次
+     */
+
+    andrSendFMP() {
+        if (this.hasSendFMP) {
+            return;
+        }
+        this.hasSendFMP = true;
+        if (this.swaninterface.boxjs.platform.isAndroid()) {
+            const sendFMP = () => {
+                swanEvents('slaveActiveFeFirstMeaningfulPaint', {
+                    eventId: 'fe_first_meaningful_paint',
+                    timeStamp: global.performance.timing.domFirstScreenPaint || 0
+                });
+            };
+            global.performance.timing.domFirstScreenPaint ? sendFMP() : setTimeout(sendFMP, 3000);
+        }
     }
 
     createAllComponents(pageContentInfo) {
@@ -199,6 +282,7 @@ export default class Slave {
         });
     }
 
+
     /**
      * 注册所有components(也包括顶层components -- page)
      */
@@ -217,6 +301,11 @@ export default class Slave {
             this.swanComponents.getBehaviorDecorators());
 
         global.componentFactory = componentFactory;
+
+        // 监听master发来的第一个initData，基于事件代理，因此使用同一个communicator
+        componentFactory.dependenciesPool.communicator.onMessage('initData', params => {
+            return swanEvents('slaveActiveRealGetData');
+        });
 
         global.pageRender = (pageTemplate, templateComponents,
             customComponents, filters, modules, from, customComponentsSizeInfo) => {
@@ -271,8 +360,9 @@ export default class Slave {
                     page.setInitData(params);
                     swanEvents('slaveActiveRenderStart');
 
-                    const attachPage = function () {
+                    const attachPage = () => {
                         page.attach(document.body);
+                        this.andrSendFMP();
                         // 通知master加载首屏之后的逻辑
                         page.communicator.sendMessage(
                             'master', {
@@ -296,7 +386,6 @@ export default class Slave {
 
                 }
                 catch (e) {
-                    console.log(e);
                     global.errorMsg['renderError'] = e;
                 }
             }, {listenPreviousEvent: true});
@@ -341,38 +430,46 @@ export default class Slave {
             document.body.addEventListener('touchmove', () => {});
             document.body.addEventListener('touchstart', e => {
                 const target = e.target;
-                const touchstart = el => {
+                let touchstart = null;
+                let touchend = null;
+                let touchcancel = null;
+                const removeAllListener = () => {
+                    target.removeEventListener('touchend', touchend);
+                    target.removeEventListener('touchstart', touchstart);
+                    target.removeEventListener('touchcancel', touchcancel);
+                };
+                touchstart = el => {
                     time.start = Date.now();
                     timer = setTimeout(() => {
                         let event = document.createEvent('Event');
-                        event.initEvent('longtapevent', true, true
-                        );
+                        event.initEvent('longtapevent', true, true);
                         Object.assign(event, {
                             changedTouches: el.changedTouches
                         });
                         target.dispatchEvent(event);
-                        target.removeEventListener('touchstart', touchstart);
                     }, LONG_PRESS_TIME_THRESHOLD);
                 };
-                const touchend =  el => {
+                touchend = el => {
                     time.end = Date.now();
                     clearTimeout(timer);
                     if (time.end - time.start < LONG_PRESS_TIME_THRESHOLD) {
                         let event = document.createEvent('Event');
-                        event.initEvent('tapevent', true, true
-                        );
+                        event.initEvent('tapevent', true, true);
                         Object.assign(event, {
                             changedTouches: el.changedTouches
                         });
                         target.dispatchEvent(event);
-                        target.removeEventListener('touchend', touchend);
-                        target.removeEventListener('touchstart', touchstart);
                     }
+                    removeAllListener();
+                };
+                touchcancel = el => {
+                    clearTimeout(timer);
+                    removeAllListener();
                 };
 
                 target.addEventListener('touchstart', touchstart);
                 target.addEventListener('touchend', touchend);
-
+                target.addEventListener('touchcancel', touchcancel);
             }, true);
         };
         browserPatch();

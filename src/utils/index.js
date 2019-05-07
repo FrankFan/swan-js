@@ -20,6 +20,38 @@ export {executeWithTryCatch} from './code-process';
 export {Data};
 export * from './path';
 
+/* global _naSwan swanGLobal */
+// 获取实验AB实验开关的值，开关值由端上传入
+export const getABSwitchValue = name => {
+    // V8与jsc环境
+    if (typeof swanGlobal !== 'undefined'
+    && _naSwan.env && _naSwan.env.config
+    && _naSwan.env.config.abTestSwitch) {
+        return _naSwan.env.config.abTestSwitch[name];
+    }
+    // webview上绑定之后的逻辑
+    else if (window._envVariables
+        && window._envVariables.abTestSwitch) {
+        return window._envVariables.abTestSwitch[name];
+    }
+};
+
+/**
+ * 将客户端下发的stringifg appConfig进行统一解析缓存
+ *
+ * @param {Object} context - 缓存解析后appConfig的上下文
+ * @param {string} appConfigStr  - 带解析的appConfig字符串
+ */
+export const appConfigStorer = (context, appConfigStr) => {
+    try {
+        if (!context.parsedAppConfig) {
+            context.parsedAppConfig = JSON.parse(appConfigStr);
+        }
+    } catch (err) {
+        console.log(`parsing appConfig error, errMsg: ${err}`);
+    }
+};
+
 export const getParams = query => {
     if (!query) {
         return {};
@@ -46,7 +78,7 @@ export const getParams = query => {
  */
 function getIndexPath() {
     try {
-        const appConfig = JSON.parse(global.appConfig);
+        const appConfig = global.parsedAppConfig;
         const index = appConfig.pages[0];
         const tabBarIndex = appConfig.tabBar
             && appConfig.tabBar.list
@@ -408,7 +440,7 @@ export const paramSplit = (originParams, splitList = []) => {
     let paramsList = [{}, {}];
 
     for (let key in originParams) {
-        if (!~~splitList.indexOf(key)) {
+        if (~splitList.indexOf(key)) {
             paramsList[0][key] = originParams[key];
         }
         else {

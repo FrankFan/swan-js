@@ -12,5 +12,4 @@ config.version = config.version.split('.')
         }
         return val;
     }).join('.');
-console.log('config:', JSON.stringify(config, null, 4), __dirname);
 fs.writeFileSync(__dirname + '/../package.json', JSON.stringify(config, null, 4), 'utf-8');

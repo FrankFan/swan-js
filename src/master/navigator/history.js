@@ -91,12 +91,7 @@ export default class History {
      */
     clear() {
         try {
-            let historyStackCopy = [];
-            Array.prototype.push.apply(historyStackCopy, this.historyStack);
-            historyStackCopy.reverse();
-            historyStackCopy.forEach(slave => {
-                slave.close();
-            });
+            this.historyStack.forEach(slave => slave.close());
         }
         catch (e) {
             console.error('析构出现错误:', e);
@@ -142,10 +137,5 @@ export default class History {
                 fn(slave);
             }
         });
-    }
-
-    getCurrentSlaveId() {
-        const topSlave = this.getTopSlaves()[0];
-        return topSlave.getSlaveId();
     }
 }

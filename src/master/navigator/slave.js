@@ -8,7 +8,6 @@ import swanEvents from '../../utils/swan-events';
 import Communicator from '../../utils/communication';
 import {getParams, loader, executeWithTryCatch} from '../../utils';
 import splitAppAccessory from '../../utils/splitapp-accessory';
-import {customComponentStatistics} from '../../utils/custom-component';
 
 const global = window;
 export default class Slave {
@@ -38,9 +37,6 @@ export default class Slave {
         this.appRootPath = appConfig.appRootPath;
         /* globals masterManager */
         this.loadJsCommunicator = masterManager.communicator;
-        this.onLoadBetweenOnReady = false;
-        this.onLoadBetweenOnShow = false;
-        this.excuteOnReady = true;
     }
 
     /**
@@ -194,12 +190,11 @@ export default class Slave {
         if (!navigationParams.url) {
             navigationParams.url = this.getFrontUri();
         }
+        navigationParams.startTime = Date.now();
         this.status = STATUS_MAP.CREATING;
-        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
         return new Promise((resolve, reject) => {
                 this.swaninterface.invoke('reLaunch', {
                     ...navigationParams,
-                    initData: {data, componentsData},
                     ...{
                         success: res => {
                             executeWithTryCatch(
@@ -262,14 +257,13 @@ export default class Slave {
      * @return {Promise} 返回初始化之后的Promise流
      */
     init(initParams) {
-        this.isFirstPage = true;
-        return Promise
-            .resolve(initParams)
+        return Promise.resolve(initParams)
             .then(initParams => {
                 swanEvents('masterActiveInitAction', Communicator.getInstance(this.swaninterface));
                 if (!!initParams.preventAppLoad) {
                     return initParams;
                 }
+
                 const loadCommonJs = this.appConfig.splitAppJs
                 && !this.appConfig.subPackages
                 ? 'common.js' : 'app.js';
@@ -409,11 +403,10 @@ export default class Slave {
      */
     openPage(navigationParams) {
         this.status = STATUS_MAP.CREATING;
-        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
+        navigationParams.startTime = Date.now();
         return new Promise((resolve, reject) => {
                 this.swaninterface.invoke('navigateTo', {
                     ...navigationParams,
-                    initData: {data, componentsData},
                     ...{
                         success: res => {
                             executeWithTryCatch(
@@ -482,13 +475,11 @@ export default class Slave {
      * @return {Object} 打开页面以后返回对象
      */
     redirectToPage(navigationParams) {
-        this.hide();
         this.close();
-        let {data, componentsData} = getInitDataAdvanced(navigationParams.url);
+        navigationParams.startTime = Date.now();
         return new Promise((resolve, reject) => {
                 this.swaninterface.invoke('redirectTo', {
                     ...navigationParams,
-                    initData: {data, componentsData},
                     ...{
                         success: res => {
                             executeWithTryCatch(
@@ -552,9 +543,6 @@ export default class Slave {
 
         try {
             swanEvents('masterPageOnLoadHookStart');
-            // 当前页面生命周期开始执行，锁定其他页面的生命周期或路由事件，待onReady后解锁
-            this.wrapLoadToReady();
-            this.wrapOnLoadToShow();
             userPageInstance._onLoad(getParams(query));
             swanEvents('masterPageOnLoadHookEnd');
         }
@@ -574,68 +562,15 @@ export default class Slave {
                     .sendInitData.call(userPageInstance, this.appConfig);
                 swanEvents('masterActiveSendInitdataEnd');
             }
-        }).then(data => {
-            userPageInstance._onShow({
-                firstInvoke: true
-            });
-            this.unWrapOnLoadToShow();
-            return data;
         });
     }
 
     switchTab(params) {
+        params.startTime = Date.now();
         return this.swaninterface.swan.reLaunch({
                 ...params,
                 url: '/' + params.url
             });
-    }
-
-    hide() {
-        try {
-            this.userPageInstance._onHide();
-        } catch (e) {
-            // avoid empty state
-        }
-    }
-
-    show() {
-        try {
-            this.userPageInstance._onShow();
-        } catch (e) {
-            // avoid empty state
-        }
-    }
-
-    wrapLoadToReady() {
-        this.onLoadBetweenOnReady = true;
-    }
-
-    unWrapLoadToReady() {
-        this.onLoadBetweenOnReady = false;
-    }
-
-    getLoadToReadyStatus() {
-        return this.onLoadBetweenOnReady;
-    }
-
-    wrapOnLoadToShow() {
-        this.onLoadBetweenOnShow = true;
-    }
-    unWrapOnLoadToShow() {
-        this.onLoadBetweenOnShow = false;
-    }
-    getOnloadToShowStatus() {
-        return this.onLoadBetweenOnShow;
-    }
-
-    jumpOnReady() {
-        this.excuteOnReady = false;
-    }
-    restoreOnReady() {
-        this.excuteOnReady = true;
-    }
-    getOnReadyStatus() {
-        return this.excuteOnReady;
     }
 
     /**

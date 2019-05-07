@@ -3,6 +3,7 @@
  * @author houyu(houyu01@baidu.com)
  */
 import swanEvents from '../../utils/swan-events';
+import {createEvent} from '../../utils/createEvent';
 import {deepClone, Data, isEqual, convertToCamelCase} from '../../utils';
 import {getPropertyVal} from '../../utils/custom-component';
 import {builtInBehaviorsAction} from './inner-behaviors';
@@ -320,15 +321,31 @@ export default class VirtualComponentFactory {
              * @param {Object=} eventData 触发的事件携带参数
              */
             triggerEvent(eventName, eventData = {}) {
-                this.pageinstance
-                .sendMessageToCurSlave({
-                    type: 'triggerEvents',
-                    nodeId: this.nodeId,
-                    eventName,
-                    eventData
-                });
-            },
+                let eventDetail = createEvent(this, eventName, eventData);
+                let nodeId = this.nodeId;
+                let pageinstance = this.pageinstance;
+                let ownerId = this.ownerId;
+                let pageUsedComponents = pageinstance.privateProperties.customComponents;
 
+                try {
+                    // 获取该自定义组件的事件集合
+                    let triggerEventName = pageUsedComponents[nodeId]['customEventMap']['bind' + eventName];
+                    // 如果在页面的usingcomponent 中找到了他的父组件
+                    if (pageUsedComponents && pageUsedComponents[ownerId]) {
+                        pageUsedComponents[ownerId].callMethod(triggerEventName, eventDetail);
+                    } else {
+                        // 没找到组件默认走页面
+                        pageinstance.callMethods(triggerEventName, eventDetail);
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            },
+            callMethod(method, args) {
+                if (typeof this[method] === 'function') {
+                    this[method](args);
+                }
+            },
             dispatch(name, value) {
                 try {
                     const parentComponent = this.pageinstance
@@ -589,8 +606,27 @@ export default class VirtualComponentFactory {
                     .forEach(componentInfo => {
                         return this.privateMethod.registerCustomComponent.call(this, componentInfo);
                     });
+                this.privateMethod.callCustomComponentLifeTimes.call(this, componentsInfo);
             },
 
+            /**
+             * 调用组件生命周期
+             *
+             * @param {Array} componentsInfo  - 一组组件的原型
+             */
+            callCustomComponentLifeTimes(componentsInfo = []) {
+                setTimeout(() => {
+                    componentsInfo.forEach(component => {
+                        callMethodSafty(this.privateProperties.customComponents[component['nodeId']], 'created');
+                    });
+                    componentsInfo.forEach(component => {
+                        callMethodSafty(this.privateProperties.customComponents[component['nodeId']], 'attached');
+                    });
+                    componentsInfo.forEach(component => {
+                        callMethodSafty(this.privateProperties.customComponents[component['nodeId']], 'ready');
+                    });
+                }, 0);
+            },
             /**
              * 用于接收slave中发来的自定义组件的事件
              *
@@ -642,6 +678,7 @@ export default class VirtualComponentFactory {
                 dataset,
                 ownerId,
                 parentId,
+                customEventMap,
                 componentPath
             }) {
                 try {
@@ -658,13 +695,9 @@ export default class VirtualComponentFactory {
                             dataset,
                             ownerId,
                             parentId,
+                            customEventMap,
                             pageinstance: this
                         });
-                    setTimeout(() => {
-                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'created');
-                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'attached');
-                        callMethodSafty(this.privateProperties.customComponents[nodeId], 'ready');
-                    }, 0);
                 }
                 catch (e) {
                     console.error(e);

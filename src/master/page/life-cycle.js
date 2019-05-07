@@ -65,8 +65,7 @@ const lifeCyclePrototype = {
      *
      * @param {Object} [params] - 页面onLoad的参数
      */
-    @renderHookEnqueue
-    _onLoad(params) {
+    _onLoad: renderHookEnqueue(function (params) {
         try {
             this.onLoad && this.onLoad(params);
             this._onLoadParams = params; // 给自定义组件page化使用
@@ -75,7 +74,7 @@ const lifeCyclePrototype = {
             console.error(e);
         }
         this._sendPageLifeCycleMessage('onLoad', params);
-    },
+    }, '_onLoad'),
 
     /**
      * onReady生命周期，在页面渲染完成，并通知master之后执行
@@ -83,8 +82,7 @@ const lifeCyclePrototype = {
      * @param {Object} [params] - 页面onReady的参数
      *
      */
-    @renderHookEnqueue
-    _onReady(params) {
+    _onReady: renderHookEnqueue(function (params) {
         try {
             this.onReady && this.onReady(params);
             customComponentLifeCycleExecutor(this, 'onReady', params);
@@ -93,15 +91,14 @@ const lifeCyclePrototype = {
             console.error(e);
         }
         this._sendPageLifeCycleMessage('onReady', params);
-    },
+    }, '_onReady'),
 
     /**
      * onShow生命周期，在页面展现出来后，但还未渲染前执行(或页面从后台切到前台，则执行)
      *
      * @param {Object} [params] - onShow生命周期的参数
      */
-    @renderHookEnqueue
-    _onShow(params) {
+    _onShow: renderHookEnqueue(function (params) {
         try {
             this._sendPageLifeCycleMessage('onPreShow', params);
             this.onShow && this.onShow(params);
@@ -115,31 +112,30 @@ const lifeCyclePrototype = {
             timestamp: Date.now() + ''
         });
         this._sendPageLifeCycleMessage('onShow', params);
-    },
+    }, '_onShow'),
 
     /**
      * onHide生命周期，在页面切换到后台，不在当前界时触发
      *
      * @param {Object} [params] - onHide生命周期的参数
      */
-    @renderHookEnqueue
-    _onHide(params) {
+    _onHide: renderHookEnqueue(function (params) {
         this.onHide && this.onHide(params);
         customComponentLifeCycleExecutor(this, 'onHide', params);
         this._sendPageLifeCycleMessage('onHide', params);
-    },
+    }, '_onHide'),
 
     /**
      * onUnload生命周期，页面被卸载时执行(页面退栈)
      *
      * @param {Object} [params] - onUnload的生命周期参数
      */
-    @renderHookEnqueue
-    _onUnload(params) {
+    _onUnload: renderHookEnqueue(function (params) {
         this.onUnload && this.onUnload(params);
+        this._onHide();
         customComponentLifeCycleExecutor(this, 'onUnload', params);
         this._sendPageLifeCycleMessage('onUnload', params);
-    },
+    }, '_onUnload'),
 
      /**
      * onForceReLaunch生命周期，小程序面板点重启时(强制relauch)
@@ -162,13 +158,12 @@ const lifeCyclePrototype = {
         this._sendPageLifeCycleMessage('onPullDownRefresh', params);
     },
 
-    @renderHookEnqueue
-    _onTabItemTap(params) {
+    _onTabItemTap: renderHookEnqueue(function (params) {
         const proccessedParams = [].concat(params)[0];
         this.onTabItemTap && this.onTabItemTap(proccessedParams);
         customComponentLifeCycleExecutor(this, 'onTabItemTap', params);
         this._sendPageLifeCycleMessage('onTabItemTap', params);
-    },
+    }, '_onTabItemTap'),
 
     _share(params) {
         this._sendPageLifeCycleMessage('beforeShare', params);
@@ -230,13 +225,11 @@ const lifeCyclePrototype = {
 
 /**
  * Page中的生命周期
- * @param {Object} [mastermanager] - masterManager对象
  * @param {Object} [pagePrototype] - Page的prototype
  * @param {Object} [pageLifeCycleEventEmitter] - 页面生命周期的事件流对象
  * @return {Object} merge后的Page的prototype
  */
-export const initLifeCycle = (mastermanager, pagePrototype, pageLifeCycleEventEmitter) => {
-    const swaninterface = mastermanager.swaninterface;
+export const initLifeCycle = (pagePrototype, pageLifeCycleEventEmitter) => {
     return Object.assign(pagePrototype, lifeCyclePrototype, {
         _pageLifeCycleEventEmitter: pageLifeCycleEventEmitter
     });

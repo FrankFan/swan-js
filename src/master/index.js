@@ -6,18 +6,21 @@
 
 /* globals swanGlobal*/
 import {getAppMethods} from './app';
+import Extension from '../extension';
 import {Navigator} from './navigator';
-import EventsEmitter from '../utils/events-emitter';
 import swanEvents from '../utils/swan-events';
 import {define, require} from '../utils/module';
+import {loader, getABSwitchValue, appConfigStorer} from '../utils';
 import Communicator from '../utils/communication';
 import {absolutePathResolver} from '../utils/path';
+import EventsEmitter from '../utils/events-emitter';
 import VirtualComponentFactory from './custom-component';
-import {getCurrentPages, Page, slaveEventInit} from './page';
 import {apiProccess} from './proccessors/api-proccessor';
-import {loader} from '../utils';
-import Extension from '../extension';
+import prefetch from '../utils/prefetch/prefetch-request';
+import {getCurrentPages, Page, slaveEventInit} from './page';
 import firstRenderHookQueue from '../utils/firstRenderHookQueue';
+
+const PERFORMANCE_PANEL_SWITCH = 'swanswitch_performance_panel';
 
 export default class Master {
 
@@ -40,7 +43,8 @@ export default class Master {
 
         // perfAudit data hook
         this.perfAudit = {};
-
+        // 记录启动时客户端传递过来的信息
+        this.initEvent = {};
         // 监听app、page所有生命周期事件
         this.bindLifeCycleEvents();
         // 监听所有的slave事件
@@ -54,7 +58,8 @@ export default class Master {
         swanEvents('masterPreloadContextDecorated');
 
         this.openSourceDebugger();
-
+        // 监听加载小程序文件的事件
+        this.listenDispatchJSFiles();
         // 监听appReady
         this.listenAppReady();
         swanEvents('masterPreloadAppReadyListened');
@@ -65,7 +70,7 @@ export default class Master {
         // 适配环境
         this.adaptEnvironment();
         // 解析宿主包
-        this.extension.use(this);
+        this.extension.use(this, 1);
 
         swanEvents('masterPreloadEnd');
     }
@@ -73,11 +78,11 @@ export default class Master {
     listenFirstRender() {
         this.swaninterface.invoke('onMessage', data => {
             if (data.type === 'slavePageComponentAttached' && !firstRenderHookQueue.firstRenderEnd) {
-                firstRenderHookQueue.firstRenderEnd = true;
                 while (!!firstRenderHookQueue.queue.length) {
                     let hook = firstRenderHookQueue.queue.shift();
                     hook.delay && hook.delay();
                 }
+                firstRenderHookQueue.firstRenderEnd = true;
             }
         });
     }
@@ -88,26 +93,21 @@ export default class Master {
     openSourceDebugger() {
         try {
             const {
-                isDebugSdk,
-                ctsServerAddress = {},
+                ctsJsAddress = {},
                 host, // IDE所在pc的host
                 port, // IDE所在pc的port
                 udid
             } = this.context._envVariables;
-            if (!!isDebugSdk) {
-                this.context.swan.openSourceDebug = {
-                    isDebugSdk
-                };
-                // 提供使用的udid和和所通信pc地址，便于ws连接
-                window._openSourceDebugInfo = {host, port: +port, udid};
-                // cts 性能测试
-                const masterCtsAddrList = ctsServerAddress.master;
-                masterCtsAddrList
-                && Array.isArray(masterCtsAddrList)
-                && masterCtsAddrList.forEach(src => {
-                    src.trim() !== '' && loader.loadjs(`${src}?t=${Date.now()}`);
-                });
-            }
+
+            // 提供使用的udid和和所通信pc地址，便于ws连接
+            global._openSourceDebugInfo = {host, port: +port, udid};
+            // 加载cts资源
+            const masterCtsAddrList = ctsJsAddress.master;
+            masterCtsAddrList
+            && Array.isArray(masterCtsAddrList)
+            && masterCtsAddrList.forEach(src => {
+                src.trim() !== '' && loader.loadjs(src);
+            });
         } catch (err) {
             return false;
         }
@@ -117,7 +117,7 @@ export default class Master {
      * 预下载分包
      */
     preLoadSubPackage() {
-        const appConfig = JSON.parse(global.appConfig);
+        const appConfig = this.context.parsedAppConfig;
         //配置项格式校验
         if ((!appConfig.preloadRule || !appConfig.subPackages)
             || typeof appConfig.preloadRule !== 'object'
@@ -158,10 +158,28 @@ export default class Master {
     }
 
     /**
+     * 监听客户端事件，若收到dispatch-js事件，就可以加载开发者代码
+     */
+    listenDispatchJSFiles() {
+        this.swaninterface.bind('dispatchJSMaster', event => {
+            if (this.appReadyTriggered) {
+                return;
+            }
+            swanEvents('masterLogicStart');
+
+            this.context.appConfig = event.appConfig;
+            appConfigStorer(this.context, event.appConfig);
+
+            this.initSlaveAndLoadAppFiles(event);
+        });
+    }
+
+    /**
      * 监听客户端的调起逻辑
      */
     listenAppReady() {
         this.swaninterface.bind('AppReady', event => {
+            this.appReadyTriggered = true;
             if (event.devhook === 'true') {
                 if (swanGlobal) {
                     loader.loadjs('./swan-devhook/master.js');
@@ -171,7 +189,22 @@ export default class Master {
             }
             swanEvents('masterActiveStart');
             // 给三方用的，并非给框架用，请保留
-            this.context.appConfig = event.appConfig;
+            if (event.appConfig) {
+                this.context.appConfig = event.appConfig;
+                appConfigStorer(this.context, event.appConfig);
+            }
+            else {
+                event.appConfig = this.context.appConfig;
+            }
+
+            // 初始化master的入口逻辑
+            this.setGLobalAppInfo();
+            // 性能面板实验开关值
+            let performancePanel = getABSwitchValue(PERFORMANCE_PANEL_SWITCH);
+            // 根据AB实验的值，判断是否需要采用端上传来的环境变量
+            if (performancePanel === 1) {
+                this.context.showPerformancePanel = event.showPerformancePanel;
+            }
             // 初始化master的入口逻辑
             swanEvents('masterActiveInitRenderStart');
             this.initRender(event);
@@ -207,6 +240,45 @@ export default class Master {
     }
 
     /**
+     * 初始化master中的slave对象，加载相关资源
+     * @param {Object} initEvent - 客户端传递的初始化事件对象
+     */
+    initSlaveAndLoadAppFiles(initEvent) {
+        // 设置appConfig
+        this.navigator.setAppConfig({
+            ...this.context.parsedAppConfig,
+            ...{
+                appRootPath: initEvent.appPath
+            }
+        });
+        this.appPath = initEvent.appPath;
+        this.initEvent = initEvent;
+        this.dispatchJSPromise = this.navigator.startLoadAppFiles({
+            pageUrl: initEvent.pageUrl,
+            slaveId: +initEvent.wvID,
+            root: initEvent.root,
+            preventAppLoad: initEvent.preventAppLoad
+        });
+    }
+
+    /**
+     * 掉用getAppInfo端能力获取信息，必须在端上的Activity绑定之后才能调用
+     */
+    setGLobalAppInfo() {
+        // 将初始化之后的app对象，返回到上面，getApp时，可以访问
+        // 获取app的相关信息，onLaunch是框架帮忙执行的，所以需要注入客户端信息
+        const appInfo = this.swaninterface.boxjs.data.get({name: 'swan-appInfoSync'});
+        global.monitorAppid = appInfo['appid'];
+        global.__swanAppInfo = appInfo;
+        try {
+            global.rainMonitor.opts.appkey = appInfo['appid'];
+            global.rainMonitor.opts.cuid = appInfo['cuid'];
+        } catch (e) {
+            // avoid empty state
+        }
+    }
+
+    /**
      * 初始化渲染
      *
      * @param {Object} initEvent - 客户端传递的初始化事件对象
@@ -216,24 +288,42 @@ export default class Master {
      * @param {string} initEvent.pageUrl - 第一个slave的url
      */
     initRender(initEvent) {
+        if (this.dispatchJSPromise
+            && initEvent.appPath === this.appPath
+            && initEvent.pageUrl === this.initEvent.pageUrl
+            && initEvent.slaveId === this.initEvent.slaveId) {
+            this.dispatchJSPromise
+                .then(() => this.navigator.pushInitSlaveToHistory());
+            swanEvents('masterActivePushInitslave');
+            return;
+        }
+
         // 设置appConfig
-        this.navigator.setAppConfig({
-            ...JSON.parse(initEvent.appConfig),
-            ...{
-                appRootPath: initEvent.appPath
-            }
-        });
-        // 压入initSlave
+        if (initEvent.appConfig && initEvent.appPath) {
+            this.navigator.setAppConfig({
+                ...this.context.parsedAppConfig,
+                ...{
+                    appRootPath: initEvent.appPath
+                }
+            });
+            this.appPath = initEvent.appPath;
+            this.initEvent = initEvent;
+        }
+        swanEvents('masterActiveInitRender');
+
+        // 初始化prefetch机制，并替换request
+        prefetch.init(this.navigator.appConfig.prefetches, this.swaninterface);
+
         swanEvents('masterActivePushInitSlaveStart');
+
+        // 压入initSlave
         this.navigator.pushInitSlave({
             pageUrl: initEvent.pageUrl,
             slaveId: +initEvent.wvID,
             root: initEvent.root,
             preventAppLoad: initEvent.preventAppLoad
         });
-
-        this.appPath = initEvent.appPath;
-
+        swanEvents('masterActivePushInitslave');
     }
 
     /**
@@ -286,32 +376,11 @@ export default class Master {
      */
     bindLifeCycleEvents() {
         this.lifeCycleEventEmitter = new EventsEmitter();
-        // this.triggerBackToHomeEvent = false;
-        const backToHomeStatus = this.navigator.getBackToHomeEventStatus();
-        // 终极方案此处仅监听onAppShow和onAppHide
-        let onAppShowTimes = 0;
-        const appLifeCycleEvents = ['onAppShow', 'onAppHide', 'onAppError', 'onPageNotFound'];
         this.swaninterface.bind('lifecycle', event => {
-            event.lcType === 'onAppShow' && onAppShowTimes++;
-            const hasAppLifeCycle = appLifeCycleEvents.some(lifecycle => lifecycle === event.lcType);
-            const canAppShowExcute = event.lcType === 'onAppShow' && onAppShowTimes < 2;
-            if (!hasAppLifeCycle || canAppShowExcute) {
-                return;
-            }
-            if (event.lcType === 'onAppHide') {
-                this.lifeCycleEventEmitter.fireMessage({
-                    type: 'onHide'
-                });
-            }
             this.lifeCycleEventEmitter.fireMessage({
-                type: event.lcType,
+                type: event.lcType + (event.lcType === 'onShow' ? event.wvID : ''),
                 event
             });
-            if (event.lcType === 'onAppShow' && !backToHomeStatus) {
-                this.lifeCycleEventEmitter.fireMessage({
-                    type: 'onShow'
-                });
-            }
         });
     }
 

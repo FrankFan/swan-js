@@ -94,10 +94,13 @@ export default class EventsEmitter {
      * @param {Object} message - 派发事件的对象
      * @return {Object} - this环境上下文
      */
-    fireMessage(message) {
+    fireMessage(message, options = {}) {
         if (message && message.type && this.handlerQueueSet.get(message.type)) {
 
-            this.messageQueueSet.pushTo(message.type, message);
+            // console.log('fireMessage-houyu:', options);
+            if (!options.once) {
+                this.messageQueueSet.pushTo(message.type, message);
+            }
 
             this.handlerQueueSet.get(message.type)
                 .forEach(item => {

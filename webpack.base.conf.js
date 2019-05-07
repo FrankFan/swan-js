@@ -1,45 +1,40 @@
 /**
- * @file webpack config for swan
- * @author houyu(houyu01@baidu.com)
+ * @file webpack prod config for swan
+ * @author xuechao(xuechao02@baidu.com)
  */
 
-const CopyWebpackPlugin = require('copy-webpack-plugin');
-const webpack = require('webpack');
-const path = require('path');
-const root = pathRelativeToRoot => path.resolve(__dirname, '..', pathRelativeToRoot);
-module.exports = {
-    entry: {
-        master: __dirname + '/src/master/index.js',
-        slaves: __dirname + '/src/slave/index.js'
-    },
-    output: {
-        path: __dirname + '/dist/box/',
-        filename: '[name]/index.js',
-        libraryTarget: "umd"
-    },
-    // devtool: 'source-map',
-    plugins: [
-        new webpack.LoaderOptionsPlugin({
-            minimize: true,
-            debug: false
-        }),
-        new webpack.optimize.UglifyJsPlugin({
-            // sourceMap: true,
-            compress: {
-                warnings: false,
-                /* eslint-disable fecs-camelcase */
-                drop_console: false
-                /* eslint-disable fecs-camelcase */
-            },
-            // sourceMap: true,
-            comments: false
-        }),
+const ExtractTextPlugin = require('extract-text-webpack-plugin');
 
-        new CopyWebpackPlugin([{
-            from: __dirname + '/src/templates/**/*',
-            to: __dirname + '/dist/box/[1]/[name].[ext]',
-            test: /([^/]+)\/([^/]+)\.[^.]+$/
-        }])
-    ]
-    // devtool: '#source-map'
+module.exports = {
+    module: {
+        loaders: [{
+                test: /\.js$/,
+                exclude: /node_modules/,
+                loader: 'babel-loader',
+                query: {
+                    presets: ['env'],
+                    plugins: [
+                        'transform-class-properties',
+                        ['transform-object-rest-spread', {
+                            useBuiltIns: true
+                        }],
+                        'transform-decorators-legacy',
+                        'transform-object-assign'
+                    ]
+                }
+            },
+            {
+                test: /\.css$/,
+                loader: ExtractTextPlugin.extract({
+                    fallback: 'style-loader',
+                    use: 'css-loader?modules&localIdentName=[local]'
+                })
+            },
+            {
+                test: /\.(png|jpg|ttf|woff|eot|svg)$/,
+                loader: 'url-loader'
+            }
+        ]
+    }
 };
+

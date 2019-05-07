@@ -1,13 +1,15 @@
 {
     "name": "@super-fe/swan-core",
-    "version": "3.30.0",
+    "version": "3.50.2",
     "description": "",
     "scripts": {
         "build": "webpack --config webpack.prod.conf.js",
         "build:watch": "pwd & webpack --config webpack.prod.conf.js --watch",
         "pretest": "sh build.sh",
         "test": "./node_modules/karma/bin/karma start ./test/karma.conf.js --single-run",
-        "prepublishOnly": "/usr/bin/env node ./tools/noPublish.js"
+        "test-local": "./node_modules/karma/bin/karma start ./test/karma.conf.js --reporters spec,coverage,html --single-run",
+        "prepublishOnly": "/usr/bin/env node ./tools/noPublish.js",
+        "preinstall": "sh commit-msg-setting.sh"
     },
     "pre-push": [
         "test"
@@ -19,7 +21,7 @@
     "license": "MIT",
     "dependencies": {
         "fs-finder": "^1.8.1",
-        "san": "^3.5.10"
+        "san": "3.7.2"
     },
     "devDependencies": {
         "babel-core": "^6.26.0",
@@ -38,6 +40,7 @@
         "jasmine": "^3.3.0",
         "jasmine-core": "^3.3.0",
         "karma": "^2.0.2",
+        "karma-html-reporter": "^0.2.7",
         "karma-chrome-launcher": "^2.2.0",
         "karma-coverage": "^1.1.2",
         "karma-jasmine": "^2.0.1",

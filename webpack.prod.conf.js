@@ -1,40 +1,48 @@
 /**
- * @file webpack prod config for swan
- * @author xuechao(xuechao02@baidu.com)
+ * @file webpack config for swan
+ * @author houyu(houyu01@baidu.com)
  */
-const merge = require('webpack-merge');
+
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+const webpack = require('webpack');
 const baseWebpackConfig = require('./webpack.base.conf.js');
-const ExtractTextPlugin = require('extract-text-webpack-plugin');
+const merge = require('webpack-merge');
 
 module.exports = merge(
     baseWebpackConfig,
     {
-        module: {
-            loaders: [{
-                    test: /\.js$/,
-                        exclude: /node_modules/,
-                        loader: 'babel-loader',
-                        query: {
-                            presets: ['env'],
-                            plugins: [
-                                'transform-class-properties', ['transform-object-rest-spread', {'useBuiltIns': true}],
-                                'transform-decorators-legacy',
-                                'transform-object-assign'
-                            ]
-                        }
+        entry: {
+            master: __dirname + '/src/master/index.js',
+            slaves: __dirname + '/src/slave/index.js'
+        },
+        output: {
+            path: __dirname + '/dist/box/',
+            filename: '[name]/index.js',
+            libraryTarget: 'umd'
+        },
+        // devtool: 'source-map',
+        plugins: [
+            new webpack.LoaderOptionsPlugin({
+                minimize: true,
+                debug: false
+            }),
+            new webpack.optimize.UglifyJsPlugin({
+                // sourceMap: true,
+                compress: {
+                    warnings: false,
+                    /* eslint-disable fecs-camelcase */
+                    drop_console: false
+                    /* eslint-disable fecs-camelcase */
                 },
-                {
-                    test: /\.css$/,
-                    loader: ExtractTextPlugin.extract({
-                        fallback: 'style-loader',
-                        use: 'css-loader?modules&localIdentName=[local]'
-                    })
-                },
-                {
-                    test: /\.(png|jpg|ttf|woff|eot|svg)$/,
-                    loader: 'url-loader'
-                }
-            ]
-        }
+                // sourceMap: true,
+                comments: false
+            }),
+            new CopyWebpackPlugin([{
+                from: __dirname + '/src/templates/**/*',
+                to: __dirname + '/dist/box/[1]/[name].[ext]',
+                test: /([^/]+)\/([^/]+)\.[^.]+$/
+            }])
+        ]
+        // devtool: '#source-map'
     }
 );

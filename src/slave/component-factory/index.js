@@ -5,7 +5,6 @@
 
 import san from 'san';
 import {loader} from '../../utils/';
-import {insertRuleForLink} from '../../utils/insertRule';
 import swanEvents from '../../utils/swan-events';
 import Communicator from '../../utils/communication';
 
@@ -31,51 +30,6 @@ export default class SanFactory {
     }
 
     /**
-     * 转换自定义组件css 方法
-     *
-     * @param {Array} customComponentCss 编译后的 css 数组
-     * @param {string} prefix css 转换需要的前缀
-     */
-    translateAllCustomImportCss(customComponentCss, prefix) {
-        let tranlatededCss = Object.create(null);
-        const doTranslateAllCustomImportCss = componentCss => {
-            if (componentCss.length === 0) {
-                return '';
-            }
-            let result = '';
-            // 分四种情况：正常 css,'swan-'前缀，'xx__'前缀,import 引用的 css,[2]一组 rules结束
-            componentCss.forEach(cssItem => {
-                if (Array.isArray(cssItem)) {
-                    let item = cssItem[0];
-                    if (item === 0) {
-                        result += prefix + '__';
-                    } else if (item === 1) {
-                        result += ('swan-' + prefix + ' ');
-                    } else if (item === 2) {
-                        let rulePrefixReg = new RegExp(`.${prefix}__${prefix}__`, 'g');
-                        result = result.replace(rulePrefixReg, '.' + prefix + '__');
-                        insertRuleForLink(result, {
-                            key: 'linkname',
-                            value: 'app'
-                        });
-                        result = '';
-                    }
-                } else if (typeof cssItem === 'string') {
-                    result += cssItem;
-                } else if (cssItem.constructor === Object) {
-                    let customAbsolutePath = cssItem.path;
-                    if (!tranlatededCss[customAbsolutePath]) {
-                        tranlatededCss[customAbsolutePath] = true;
-                        doTranslateAllCustomImportCss(
-                            this.allCustomComponentsImportCss[customAbsolutePath] || []);
-                    }
-                }
-            });
-        };
-        doTranslateAllCustomImportCss(customComponentCss);
-    }
-
-    /**
      * 创建组件的工厂方法
      *
      * @param {Object} componentName - 创建组件的名称
@@ -83,8 +37,25 @@ export default class SanFactory {
      * @param {Object} properties - 创建组件用的属性
      */
     componentDefine(componentName, componentPrototype, properties = {}) {
+        const that = this;
         this.componentInfos[componentName] = {
-            componentPrototype,
+            componentPrototype: {
+                ...componentPrototype,
+                getComponentType(aNode) {
+                    const tagName = aNode.tagName;
+                    if (!Array.isArray(this.componentDependencies)) {
+                        return this.components[tagName];
+                    }
+                    if (this.componentDependencies.includes(tagName)) {
+                        if (this.subTag === tagName) {
+                            console.warn(`禁止在 ${this.tagName} 组件中使用组件自身`);
+                            return undefined;
+                        }
+                        return that.allComponents[tagName];
+                    }
+                    return undefined;
+                }
+            },
             ...properties
         };
     }
@@ -95,7 +66,8 @@ export default class SanFactory {
      * @return {Object} 获取的当前注册过的所有组件
      */
     getAllComponents() {
-        return this.getComponents();
+        this.allComponents = this.getComponents();
+        return this.allComponents;
     }
 
     /**
@@ -133,10 +105,10 @@ export default class SanFactory {
 
         // 获取超类名称
         const superComponentName = originComponentPrototype.superComponent || 'swan-component';
-        
+
         // 获取到当前组件的超类
         const superComponent = this.componentInfos[superComponentName].componentPrototype;
-        
+
         // 继承
         const mergedComponentPrototype = this.mergeComponentProtos(
                 superComponent,
@@ -279,10 +251,6 @@ export default class SanFactory {
         const appPath = window.pageInfo.appPath;
         let that = this;
         return Promise.all([
-            loader.loadcss(`${appPath}/app.css`, 'slaveActiveAppCssLoaded', [{
-                key: 'linkname',
-                value: 'app'
-            }]),
             loader.loadjs(`${appPath}/allImportedCssContent.js`),
             loader.loadjs(`${appPath}/allCusomComponents.swan.js`)
         ]).then(function () {
@@ -315,7 +283,6 @@ export default class SanFactory {
                     customNamesArr.forEach(prefix => {
                         let swanPrefix = 'swan-' + prefix;
                         let i = niqueIndex++;
-                        that.translateAllCustomImportCss(customComponentObj.customComponentCss, prefix);
                         // 避免组件名重复造成 css 覆盖问题
                         let componentUniqueName = 'components/' + prefix + '/' + prefix + i;
                         that.componentDefine(componentUniqueName, Object.assign({},
@@ -325,7 +292,9 @@ export default class SanFactory {
                                     + customComponentObj.template + '</' + swanPrefix + '>',
                                 componentPath: customComponentObj.componentPath,
                                 componentName: prefix,
-                                customComponentCss: ''
+                                componentUniqueName: componentUniqueName,
+                                customComponentCss: that.translateAllCustomImportCss(
+                                    customComponentObj.customComponentCss, prefix) || ''
                             }
                         ), {
                                 classProperties: {

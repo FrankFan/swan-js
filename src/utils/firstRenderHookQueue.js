@@ -21,15 +21,13 @@ const isRenderPriorityV8 = () => {
 
 const isRenderPriorityWV = () => {
     // 判断是否需要在webview环境下开启渲染前置
-    return window.extraConfig && window.extraConfig.abTestSwitch
+    return typeof swanGlobal === 'undefined'
+    && window.extraConfig && window.extraConfig.abTestSwitch
     && parseInt(window.extraConfig.abTestSwitch['swanswitch_first_render_priority'], 10) === 1;
 };
 
-if (isRenderPriorityV8()) {
+if (isRenderPriorityV8() || isRenderPriorityWV()) {
     // v8/jsc环境
-    firstRenderPriorityEnable = true;
-} else if (isRenderPriorityWV()) {
-    // webview环境
     firstRenderPriorityEnable = true;
 }
 
@@ -44,16 +42,17 @@ export default firstRenderHookQueue;
  */
 
 export function renderHookEnqueue(target, hookName) {
-    return function (params) {
+    return function (...params) {
+        let that = this;
         if (firstRenderPriorityEnable && !firstRenderHookQueue.firstRenderEnd) {
             firstRenderHookQueue.queue.push({
                 stage: hookName,
                 delay() {
-                    target.call(this, params);
+                    target.call(that, ...params);
                 }
             });
             return;
         }
-        target.call(this, params);
+        target.call(that, ...params);
     };
 }
